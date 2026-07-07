@@ -1,22 +1,19 @@
-const express=require("express");
+const express = require("express");
 
-const router=express.Router();
+const router = express.Router();
 
-const verifyToken=
-require("../middleware/authMiddleware");
+const verifyToken = require("../middleware/authMiddleware");
+const { authorizeRole } = require("../middleware/roleMiddleware");
 
 const {
-rankApplicants
-}=require("../controllers/recruiterRankingController");
+  rankApplicants,
+} = require("../controllers/recruiterRankingController");
 
 router.get(
-
-"/:jobId",
-
-verifyToken,
-
-rankApplicants
-
+  "/:jobId",
+  verifyToken,
+  authorizeRole("recruiter"),
+  rankApplicants
 );
 
-module.exports=router;
+module.exports = router;
