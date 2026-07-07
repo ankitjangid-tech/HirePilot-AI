@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import "../App.css";
 
-import { getNotifications } from "../services/notificationService";
+import {
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  cleanupDuplicateNotifications,
+} from "../services/notificationService";
 import {
   getProfile,
   updateProfile,
@@ -30,6 +35,14 @@ const fieldLabels = {
   expected_salary: "Expected Salary",
 };
 
+const notificationLabels = {
+  shortlisted: "Shortlisted",
+  rejected: "Rejected",
+  selected: "Selected",
+  interview_scheduled: "Interview",
+  general: "Update",
+};
+
 const buildProfileForm = (profile) => ({
   skills: profile?.skills || "",
   experience_years:
@@ -46,6 +59,11 @@ const statusClass = (status) =>
     .toLowerCase()
     .replace(/\s+/g, "-")}`;
 
+const notificationClass = (type) =>
+  `status-badge status-${String(type || "general")
+    .toLowerCase()
+    .replace(/_/g, "-")}`;
+
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -57,13 +75,16 @@ function CandidateDashboard() {
   const [applications, setApplications] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const [message, setMessage] = useState("");
   const [resumeMessage, setResumeMessage] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
+  const [notificationMessage, setNotificationMessage] = useState("");
   const [uploadingResume, setUploadingResume] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [completingApplicationId, setCompletingApplicationId] = useState(null);
+  const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   const fetchDashboardData = async () => {
     try {
@@ -96,7 +117,15 @@ function CandidateDashboard() {
       setPendingApplications(pendingResponse.data.pendingApplications || []);
 
       const notificationsResponse = await getNotifications(token);
-      setNotifications(notificationsResponse.data.notifications || []);
+      const notificationRows = notificationsResponse.data.notifications || [];
+
+      setNotifications(notificationRows);
+      setUnreadCount(
+        notificationsResponse.data.unread_count ??
+          notificationRows.filter(
+            (notification) => notification.notification_id && !notification.is_read
+          ).length
+      );
     } catch (error) {
       console.log("DASHBOARD FETCH ERROR:", error.response?.data || error.message);
       setMessage("Unable to refresh dashboard");
@@ -229,6 +258,86 @@ function CandidateDashboard() {
       setMessage(error.response?.data?.error || "Unable to complete application");
     } finally {
       setCompletingApplicationId(null);
+    }
+  };
+
+  const handleMarkNotificationRead = async (notificationId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setNotificationMessage("Please login again");
+        return;
+      }
+
+      setNotificationActionLoading(true);
+      const response = await markNotificationRead(token, notificationId);
+      setNotificationMessage(response.data.message);
+      await fetchDashboardData();
+    } catch (error) {
+      console.log(
+        "MARK NOTIFICATION READ ERROR:",
+        error.response?.data || error.message
+      );
+      setNotificationMessage(
+        error.response?.data?.error || "Unable to update notification"
+      );
+    } finally {
+      setNotificationActionLoading(false);
+    }
+  };
+
+  const handleMarkAllNotificationsRead = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setNotificationMessage("Please login again");
+        return;
+      }
+
+      setNotificationActionLoading(true);
+      const response = await markAllNotificationsRead(token);
+      setNotificationMessage(response.data.message);
+      await fetchDashboardData();
+    } catch (error) {
+      console.log(
+        "MARK ALL NOTIFICATIONS READ ERROR:",
+        error.response?.data || error.message
+      );
+      setNotificationMessage(
+        error.response?.data?.error || "Unable to update notifications"
+      );
+    } finally {
+      setNotificationActionLoading(false);
+    }
+  };
+
+  const handleCleanupDuplicateNotifications = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setNotificationMessage("Please login again");
+        return;
+      }
+
+      setNotificationActionLoading(true);
+      const response = await cleanupDuplicateNotifications(token);
+      setNotificationMessage(
+        `${response.data.message} | Removed: ${response.data.deleted_count || 0}`
+      );
+      await fetchDashboardData();
+    } catch (error) {
+      console.log(
+        "CLEANUP NOTIFICATIONS ERROR:",
+        error.response?.data || error.message
+      );
+      setNotificationMessage(
+        error.response?.data?.error || "Unable to clean duplicate notifications"
+      );
+    } finally {
+      setNotificationActionLoading(false);
     }
   };
 
@@ -504,13 +613,33 @@ function CandidateDashboard() {
       </section>
 
       <section className="panel">
-        <div className="section-heading">
+        <div className="section-heading notification-heading">
           <div>
             <p className="eyebrow">Updates</p>
-            <h2>Notifications</h2>
+            <h2>Notification Center</h2>
+            <p className="muted">Unread: {unreadCount}</p>
           </div>
-          <span className="count-pill">{notifications.length}</span>
+          <div className="button-row">
+            <button
+              className="secondary-button"
+              onClick={handleMarkAllNotificationsRead}
+              disabled={notificationActionLoading || unreadCount === 0}
+            >
+              Mark all read
+            </button>
+            <button
+              className="danger-button"
+              onClick={handleCleanupDuplicateNotifications}
+              disabled={notificationActionLoading || notifications.length === 0}
+            >
+              Clean duplicates
+            </button>
+          </div>
         </div>
+
+        {notificationMessage && (
+          <div className="notice-banner compact">{notificationMessage}</div>
+        )}
 
         {notifications.length === 0 ? (
           <p className="empty-state">No notifications yet.</p>
@@ -518,13 +647,31 @@ function CandidateDashboard() {
           <div className="stack-list">
             {notifications.map((notification, index) => (
               <article
-                className="notification-card"
-                key={notification.notification_id || notification.interview_id || index}
+                className={`notification-card ${
+                  notification.notification_id && !notification.is_read ? "unread" : ""
+                }`}
+                key={
+                  notification.notification_id ||
+                  notification.reference_id ||
+                  notification.interview_id ||
+                  index
+                }
               >
-                {notification.message && <p>{notification.message}</p>}
+                <div className="notification-topline">
+                  <span className={notificationClass(notification.notification_type)}>
+                    {notificationLabels[notification.notification_type] || "Update"}
+                  </span>
+                  <span className="notification-date">
+                    {notification.created_at
+                      ? new Date(notification.created_at).toLocaleString()
+                      : ""}
+                  </span>
+                </div>
+
+                <p>{notification.message}</p>
 
                 {notification.interview_date && (
-                  <div>
+                  <div className="interview-mini-card">
                     <p>
                       <strong>Interview Date:</strong>{" "}
                       {new Date(notification.interview_date).toLocaleDateString()}
@@ -540,6 +687,18 @@ function CandidateDashboard() {
                       Join Meeting
                     </a>
                   </div>
+                )}
+
+                {notification.notification_id && !notification.is_read && (
+                  <button
+                    className="secondary-button small-button"
+                    onClick={() =>
+                      handleMarkNotificationRead(notification.notification_id)
+                    }
+                    disabled={notificationActionLoading}
+                  >
+                    Mark as read
+                  </button>
                 )}
               </article>
             ))}
