@@ -11,6 +11,8 @@ import {
   getProfile,
   updateProfile,
   uploadResume,
+  viewMyResume,
+  downloadMyResume,
 } from "../services/candidateService";
 import { getMatchedJobs, autoApply } from "../services/jobService";
 import {
@@ -53,6 +55,33 @@ const notificationLabels = {
   selected: "Selected",
   interview_scheduled: "Interview",
   general: "Update",
+};
+
+const openPdfBlob = (blob) => {
+  const pdfBlob = new Blob([blob], { type: "application/pdf" });
+  const fileUrl = URL.createObjectURL(pdfBlob);
+
+  window.open(fileUrl, "_blank", "noopener,noreferrer");
+
+  setTimeout(() => {
+    URL.revokeObjectURL(fileUrl);
+  }, 60000);
+};
+
+const downloadPdfBlob = (blob, filename) => {
+  const pdfBlob = new Blob([blob], { type: "application/pdf" });
+  const fileUrl = URL.createObjectURL(pdfBlob);
+  const link = document.createElement("a");
+
+  link.href = fileUrl;
+  link.download = filename || "candidate-resume.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(fileUrl);
+  }, 60000);
 };
 
 const buildProfileForm = (profile) => ({
@@ -108,6 +137,7 @@ function CandidateDashboard() {
   const [profileMessage, setProfileMessage] = useState("");
   const [notificationMessage, setNotificationMessage] = useState("");
   const [uploadingResume, setUploadingResume] = useState(false);
+  const [resumeActionLoading, setResumeActionLoading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [completingApplicationId, setCompletingApplicationId] = useState(null);
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
@@ -199,6 +229,54 @@ function CandidateDashboard() {
       setResumeMessage(error.response?.data?.error || "Resume upload failed");
     } finally {
       setUploadingResume(false);
+    }
+  };
+
+  const handleViewResume = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setResumeMessage("Please login again");
+        return;
+      }
+
+      setResumeActionLoading(true);
+      setResumeMessage("Opening resume...");
+
+      const response = await viewMyResume(token);
+
+      openPdfBlob(response.data);
+      setResumeMessage("Resume opened securely");
+    } catch (error) {
+      console.log("VIEW RESUME ERROR:", error.response?.data || error.message);
+      setResumeMessage("Unable to open resume. Please upload a resume first.");
+    } finally {
+      setResumeActionLoading(false);
+    }
+  };
+
+  const handleDownloadResume = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setResumeMessage("Please login again");
+        return;
+      }
+
+      setResumeActionLoading(true);
+      setResumeMessage("Downloading resume...");
+
+      const response = await downloadMyResume(token);
+
+      downloadPdfBlob(response.data, profile?.resume_url || "candidate-resume.pdf");
+      setResumeMessage("Resume downloaded securely");
+    } catch (error) {
+      console.log("DOWNLOAD RESUME ERROR:", error.response?.data || error.message);
+      setResumeMessage("Unable to download resume. Please upload a resume first.");
+    } finally {
+      setResumeActionLoading(false);
     }
   };
 
@@ -503,6 +581,29 @@ function CandidateDashboard() {
               >
                 {uploadingResume ? "Uploading..." : "Upload Resume"}
               </button>
+            </div>
+
+            <div className="resume-access-card">
+              <div>
+                <span>Current Resume</span>
+                <strong>{profile.resume_url || "Not uploaded"}</strong>
+              </div>
+              <div className="button-row compact-row">
+                <button
+                  className="secondary-button"
+                  onClick={handleViewResume}
+                  disabled={!profile.resume_url || resumeActionLoading}
+                >
+                  View Resume
+                </button>
+                <button
+                  className="secondary-button"
+                  onClick={handleDownloadResume}
+                  disabled={!profile.resume_url || resumeActionLoading}
+                >
+                  Download Resume
+                </button>
+              </div>
             </div>
 
             {resumeMessage && <p className="helper-text">{resumeMessage}</p>}

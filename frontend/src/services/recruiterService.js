@@ -1,112 +1,41 @@
 import axios from "axios";
 
-const API=axios.create({
-
-baseURL:
-"http://localhost:5000/api"
-
+const API = axios.create({
+  baseURL: "http://localhost:5000/api",
 });
 
-export const getMyJobs=(token)=>{
+const authHeaders = (token) => ({
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
 
-return API.get(
-
-"/recruiter/my-jobs",
-
-{
-
-headers:{
-
-Authorization:
-`Bearer ${token}`
-
-}
-
-}
-
-);
-
+export const getMyJobs = (token) => {
+  return API.get("/recruiter/my-jobs", authHeaders(token));
 };
 
-
-export const getApplicants=(
-
-jobId,
-token
-
-)=>{
-
-return API.get(
-
-`/recruiter-ranking/${jobId}`,
-
-{
-
-headers:{
-
-Authorization:
-`Bearer ${token}`
-
-}
-
-}
-
-);
-
+export const getApplicants = (jobId, token) => {
+  return API.get(`/recruiter-ranking/${jobId}`, authHeaders(token));
 };
 
-export const updateStatus=(
-
-data,
-token
-
-)=>{
-
-return API.put(
-
-"/application-status/update",
-
-data,
-
-{
-
-headers:{
-
-Authorization:
-`Bearer ${token}`
-
-}
-
-}
-
-);
-
+export const updateStatus = (data, token) => {
+  return API.put("/application-status/update", data, authHeaders(token));
 };
 
-export const scheduleInterview=(
+export const scheduleInterview = (data, token) => {
+  return API.post("/interviews/schedule", data, authHeaders(token));
+};
 
-data,
-token
+export const viewApplicantResume = (applicationId, token) => {
+  return API.get(`/resume/applicant/${applicationId}`, {
+    ...authHeaders(token),
+    responseType: "blob",
+  });
+};
 
-)=>{
-
-return API.post(
-
-"/interviews/schedule",
-
-data,
-
-{
-
-headers:{
-
-Authorization:
-`Bearer ${token}`
-
-}
-
-}
-
-);
-
+export const downloadApplicantResume = (applicationId, token) => {
+  return API.get(`/resume/applicant/${applicationId}/download`, {
+    ...authHeaders(token),
+    responseType: "blob",
+  });
 };

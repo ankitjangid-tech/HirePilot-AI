@@ -1,50 +1,83 @@
 const express = require("express");
 const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 
 const router = express.Router();
 
-const verifyToken =
-require("../middleware/authMiddleware");
+const verifyToken = require("../middleware/authMiddleware");
+const { authorizeRole } = require("../middleware/roleMiddleware");
 
 const {
-uploadResume
-}=require("../controllers/resumeController");
+  uploadResume,
+  viewMyResume,
+  downloadMyResume,
+  viewApplicantResume,
+  downloadApplicantResume,
+} = require("../controllers/resumeController");
 
-const storage=multer.diskStorage({
+const uploadDir = path.join(__dirname, "..", "uploads");
 
-destination:(req,file,cb)=>{
-
-cb(null,"./uploads/");
-
-},
-
-filename:(req,file,cb)=>{
-
-cb(
-null,
-Date.now()+"-"+file.originalname
-);
-
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+
+  filename: (req, file, cb) => {
+    const safeOriginalName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${Date.now()}-${safeOriginalName}`);
+  },
 });
 
-const upload=multer({
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== "application/pdf") {
+      return cb(new Error("Only PDF resumes are allowed"));
+    }
 
-storage:storage
-
+    return cb(null, true);
+  },
 });
 
 router.post(
-
-"/upload",
-
-verifyToken,
-
-upload.single("resume"),
-
-uploadResume
-
+  "/upload",
+  verifyToken,
+  authorizeRole("candidate"),
+  upload.single("resume"),
+  uploadResume
 );
 
-module.exports=router;
+router.get(
+  "/my-resume",
+  verifyToken,
+  authorizeRole("candidate"),
+  viewMyResume
+);
+
+router.get(
+  "/my-resume/download",
+  verifyToken,
+  authorizeRole("candidate"),
+  downloadMyResume
+);
+
+router.get(
+  "/applicant/:applicationId",
+  verifyToken,
+  authorizeRole("recruiter"),
+  viewApplicantResume
+);
+
+router.get(
+  "/applicant/:applicationId/download",
+  verifyToken,
+  authorizeRole("recruiter"),
+  downloadApplicantResume
+);
+
+module.exports = router;

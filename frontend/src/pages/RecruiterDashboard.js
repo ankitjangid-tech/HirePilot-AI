@@ -6,6 +6,8 @@ import {
   getApplicants,
   updateStatus,
   scheduleInterview,
+  viewApplicantResume,
+  downloadApplicantResume,
 } from "../services/recruiterService";
 
 const statusClass = (status) =>
@@ -48,6 +50,33 @@ const renderExternalLink = (label, url) => {
   );
 };
 
+const openPdfBlob = (blob) => {
+  const pdfBlob = new Blob([blob], { type: "application/pdf" });
+  const fileUrl = URL.createObjectURL(pdfBlob);
+
+  window.open(fileUrl, "_blank", "noopener,noreferrer");
+
+  setTimeout(() => {
+    URL.revokeObjectURL(fileUrl);
+  }, 60000);
+};
+
+const downloadPdfBlob = (blob, filename) => {
+  const pdfBlob = new Blob([blob], { type: "application/pdf" });
+  const fileUrl = URL.createObjectURL(pdfBlob);
+  const link = document.createElement("a");
+
+  link.href = fileUrl;
+  link.download = filename || "applicant-resume.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(fileUrl);
+  }, 60000);
+};
+
 function RecruiterDashboard() {
   const [jobs, setJobs] = useState([]);
   const [applicants, setApplicants] = useState([]);
@@ -57,6 +86,7 @@ function RecruiterDashboard() {
   const [loadingApplicants, setLoadingApplicants] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
   const [busyApplicationId, setBusyApplicationId] = useState(null);
+  const [busyResumeApplicationId, setBusyResumeApplicationId] = useState(null);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [expandedApplicationId, setExpandedApplicationId] = useState(null);
 
@@ -218,6 +248,65 @@ function RecruiterDashboard() {
     }
   };
 
+  const handleViewApplicantResume = async (candidate) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setActionMessage("Please login again");
+        return;
+      }
+
+      setBusyResumeApplicationId(candidate.application_id);
+      setActionMessage("Opening resume securely...");
+
+      const response = await viewApplicantResume(candidate.application_id, token);
+
+      openPdfBlob(response.data);
+      setActionMessage("Resume opened securely");
+    } catch (error) {
+      console.log(
+        "VIEW APPLICANT RESUME ERROR:",
+        error.response?.data || error.message
+      );
+
+      setActionMessage("Unable to open applicant resume");
+    } finally {
+      setBusyResumeApplicationId(null);
+    }
+  };
+
+  const handleDownloadApplicantResume = async (candidate) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setActionMessage("Please login again");
+        return;
+      }
+
+      setBusyResumeApplicationId(candidate.application_id);
+      setActionMessage("Downloading resume securely...");
+
+      const response = await downloadApplicantResume(
+        candidate.application_id,
+        token
+      );
+
+      downloadPdfBlob(response.data, candidate.resume_url || "applicant-resume.pdf");
+      setActionMessage("Resume downloaded securely");
+    } catch (error) {
+      console.log(
+        "DOWNLOAD APPLICANT RESUME ERROR:",
+        error.response?.data || error.message
+      );
+
+      setActionMessage("Unable to download applicant resume");
+    } finally {
+      setBusyResumeApplicationId(null);
+    }
+  };
+
   const toggleDetails = (candidate) => {
     setExpandedApplicationId((currentId) =>
       currentId === candidate.application_id ? null : candidate.application_id
@@ -375,10 +464,35 @@ function RecruiterDashboard() {
         </div>
       </div>
 
-      <div className="preview-footer">
-        <span>
-          Resume: {candidate.resume_url ? candidate.resume_url : "Not uploaded"}
-        </span>
+      <div className="preview-footer resume-footer">
+        <div className="resume-file-name">
+          <span>Resume</span>
+          <strong>{candidate.resume_url ? candidate.resume_url : "Not uploaded"}</strong>
+        </div>
+
+        <div className="button-row compact-row">
+          <button
+            className="secondary-button small-button"
+            onClick={() => handleViewApplicantResume(candidate)}
+            disabled={
+              !candidate.resume_url ||
+              busyResumeApplicationId === candidate.application_id
+            }
+          >
+            View Resume
+          </button>
+          <button
+            className="secondary-button small-button"
+            onClick={() => handleDownloadApplicantResume(candidate)}
+            disabled={
+              !candidate.resume_url ||
+              busyResumeApplicationId === candidate.application_id
+            }
+          >
+            Download
+          </button>
+        </div>
+
         {candidate.has_interview && <span>Interview already scheduled</span>}
       </div>
     </div>
