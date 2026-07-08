@@ -956,3 +956,152 @@ button:disabled {
     flex-direction: column;
   }
 }
+
+.external-discovery-panel {
+  border-color: #c7d2fe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+
+.external-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.external-job-card {
+  gap: 14px;
+}
+
+.external-card-topline,
+.external-actions-row,
+.external-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.external-card-topline,
+.external-actions-row {
+  justify-content: space-between;
+}
+
+.external-meta-row span,
+.source-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #eef2f7;
+  color: #344054;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.source-tag {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.mini-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.external-application-card {
+  align-items: flex-start;
+}
+
+.status-pending-manual {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+@media (max-width: 700px) {
+  .external-card-topline,
+  .external-actions-row,
+  .external-meta-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+/* External Job Discovery layout fix
+   Keeps external job cards inside the dashboard grid instead of inheriting
+   the horizontal .item-card layout used by normal matched-job cards. */
+.external-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 14px;
+  align-items: stretch;
+}
+
+.external-job-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 14px;
+  min-width: 0;
+  width: 100%;
+}
+
+.external-job-card > * {
+  min-width: 0;
+}
+
+.external-job-card h3,
+.external-job-card p {
+  overflow-wrap: anywhere;
+}
+
+.external-card-topline {
+  justify-content: space-between;
+}
+
+.external-meta-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  align-items: stretch;
+  gap: 8px;
+}
+
+.external-meta-row span,
+.source-tag,
+.external-job-card .chip,
+.external-job-card .score-pill {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.external-actions-row {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.external-actions-row .primary-button,
+.external-actions-row .secondary-button {
+  flex: 0 1 auto;
+  white-space: normal;
+  text-align: center;
+}
+
+@media (max-width: 700px) {
+  .external-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .external-card-topline,
+  .external-actions-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .external-actions-row .primary-button,
+  .external-actions-row .secondary-button {
+    width: 100%;
+  }
+}

@@ -1,22 +1,43 @@
-const express=require("express");
+const express = require("express");
 
-const router=express.Router();
+const router = express.Router();
 
-const verifyToken=
-require("../middleware/authMiddleware");
+const verifyToken = require("../middleware/authMiddleware");
+const { authorizeRole } = require("../middleware/roleMiddleware");
 
 const {
-applyExternalJob
-}=require("../controllers/externalJobController");
+  getMatchedExternalJobs,
+  getMyExternalApplications,
+  applyExternalJob,
+  completeExternalApplication,
+} = require("../controllers/externalJobController");
 
-router.post(
-
-"/apply",
-
-verifyToken,
-
-applyExternalJob
-
+router.get(
+  "/matched",
+  verifyToken,
+  authorizeRole("candidate"),
+  getMatchedExternalJobs
 );
 
-module.exports=router;
+router.get(
+  "/my-applications",
+  verifyToken,
+  authorizeRole("candidate"),
+  getMyExternalApplications
+);
+
+router.post(
+  "/apply",
+  verifyToken,
+  authorizeRole("candidate"),
+  applyExternalJob
+);
+
+router.put(
+  "/complete",
+  verifyToken,
+  authorizeRole("candidate"),
+  completeExternalApplication
+);
+
+module.exports = router;

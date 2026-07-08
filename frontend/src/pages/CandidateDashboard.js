@@ -20,6 +20,12 @@ import {
   getPendingApplications,
   completePendingApplication,
 } from "../services/applicationService";
+import {
+  getMatchedExternalJobs,
+  getExternalApplications,
+  applyExternalJob,
+  completeExternalApplication,
+} from "../services/externalJobService";
 
 const emptyProfileForm = {
   full_name: "",
@@ -129,12 +135,15 @@ function CandidateDashboard() {
   const [resumeFile, setResumeFile] = useState(null);
 
   const [jobs, setJobs] = useState([]);
+  const [externalJobs, setExternalJobs] = useState([]);
+  const [externalApplications, setExternalApplications] = useState([]);
   const [applications, setApplications] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
 
   const [message, setMessage] = useState("");
+  const [externalMessage, setExternalMessage] = useState("");
   const [resumeMessage, setResumeMessage] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
   const [notificationMessage, setNotificationMessage] = useState("");
@@ -142,6 +151,8 @@ function CandidateDashboard() {
   const [resumeActionLoading, setResumeActionLoading] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [completingApplicationId, setCompletingApplicationId] = useState(null);
+  const [externalApplyingId, setExternalApplyingId] = useState(null);
+  const [completingExternalApplicationId, setCompletingExternalApplicationId] = useState(null);
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   const fetchDashboardData = async () => {
@@ -163,6 +174,14 @@ function CandidateDashboard() {
 
       const jobsResponse = await getMatchedJobs(token);
       setJobs(jobsResponse.data.matchedJobs || []);
+
+      const externalJobsResponse = await getMatchedExternalJobs(token);
+      setExternalJobs(externalJobsResponse.data.matchedExternalJobs || []);
+
+      const externalApplicationsResponse = await getExternalApplications(token);
+      setExternalApplications(
+        externalApplicationsResponse.data.externalApplications || []
+      );
 
       const applicationsResponse = await getApplications(token);
       setApplications(
@@ -350,6 +369,61 @@ function CandidateDashboard() {
     }
   };
 
+  const handleApplyExternalJob = async (externalJobId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setExternalApplyingId(externalJobId);
+      setExternalMessage("Attempting external application...");
+
+      const response = await applyExternalJob(token, externalJobId);
+
+      setExternalMessage(response.data.message);
+      await fetchDashboardData();
+    } catch (error) {
+      console.log("EXTERNAL APPLY ERROR:", error.response?.data || error.message);
+      setExternalMessage(
+        error.response?.data?.error || "External application failed"
+      );
+    } finally {
+      setExternalApplyingId(null);
+    }
+  };
+
+  const handleCompleteExternalApplication = async (externalApplicationId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setCompletingExternalApplicationId(externalApplicationId);
+      setExternalMessage("Completing external application...");
+
+      const response = await completeExternalApplication(token, externalApplicationId);
+
+      setExternalMessage(response.data.message);
+      await fetchDashboardData();
+    } catch (error) {
+      console.log(
+        "COMPLETE EXTERNAL APPLICATION ERROR:",
+        error.response?.data || error.message
+      );
+      setExternalMessage(
+        error.response?.data?.error || "Unable to complete external application"
+      );
+    } finally {
+      setCompletingExternalApplicationId(null);
+    }
+  };
+
   const handleCompleteApplication = async (applicationId) => {
     try {
       const token = localStorage.getItem("token");
@@ -484,7 +558,7 @@ function CandidateDashboard() {
       {message && <div className="notice-banner">{message}</div>}
 
       {profile && (
-        <section className="dashboard-grid two-column">
+      <section className="dashboard-grid two-column">
           <div className="panel">
             <div className="section-heading">
               <div>
@@ -844,6 +918,91 @@ function CandidateDashboard() {
         )}
       </section>
 
+      <section className="panel external-discovery-panel">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">External Discovery</p>
+          <h2>External Matched Jobs</h2>
+          <p className="muted">
+            Phase 1 uses safe simulated external sources. Future agent layer will
+            connect company career pages and supported job portals.
+          </p>
+        </div>
+        <span className="count-pill">{externalJobs.length}</span>
+      </div>
+
+      {externalMessage && <div className="notice-banner compact">{externalMessage}</div>}
+
+      {externalJobs.length === 0 ? (
+        <p className="empty-state">No external matched jobs found yet.</p>
+      ) : (
+        <div className="card-grid external-card-grid">
+          {externalJobs.map((job) => (
+            <article className="item-card external-job-card" key={job.external_job_id}>
+              <div className="external-card-topline">
+                <span className="source-tag">{job.source_platform}</span>
+                <span className="score-pill">{job.match_score}% match</span>
+              </div>
+
+              <div>
+                <h3>{job.job_title}</h3>
+                <p>{job.company_name}</p>
+              </div>
+
+              <div className="external-meta-row">
+                <span>{job.location || "Location not listed"}</span>
+                <span>{job.salary || "Salary not listed"}</span>
+                <span>
+                  {job.apply_mode === "easy_apply"
+                    ? "Auto-apply possible"
+                    : "Manual questions likely"}
+                </span>
+              </div>
+
+              <div>
+                <span className="mini-label">Matched Skills</span>
+                <div className="chip-row">
+                  {(job.matched_skills || []).map((skill) => (
+                    <span className="chip success" key={skill}>
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="external-actions-row">
+                {job.application_status ? (
+                  <span className={statusClass(job.application_status)}>
+                    {job.application_status}
+                  </span>
+                ) : (
+                  <button
+                    className="primary-button"
+                    onClick={() => handleApplyExternalJob(job.external_job_id)}
+                    disabled={externalApplyingId === job.external_job_id}
+                  >
+                    {externalApplyingId === job.external_job_id
+                      ? "Applying..."
+                      : "Apply with HirePilot"}
+                  </button>
+                )}
+
+                <a
+                  className="secondary-button link-button"
+                  href={job.job_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  View Source
+                </a>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
+      </section>
+
+
       <section className="dashboard-grid two-column">
         <div className="panel">
           <div className="section-heading">
@@ -912,6 +1071,76 @@ function CandidateDashboard() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">External Applications</p>
+            <h2>External Apply Tracker</h2>
+          </div>
+          <span className="count-pill">{externalApplications.length}</span>
+        </div>
+
+        {externalApplications.length === 0 ? (
+          <p className="empty-state">No external applications yet.</p>
+        ) : (
+          <div className="stack-list">
+            {externalApplications.map((application) => (
+              <article
+                className="list-card external-application-card"
+                key={application.external_application_id}
+              >
+                <div>
+                  <h3>{application.job_title}</h3>
+                  <p>
+                    {application.company_name} • {application.source_platform}
+                  </p>
+                  {application.failure_reason && (
+                    <p className="helper-text compact-muted">
+                      {application.failure_reason}
+                    </p>
+                  )}
+                </div>
+
+                <div className="external-actions-row">
+                  <span className={statusClass(application.application_status)}>
+                    {application.application_status}
+                  </span>
+
+                  {application.application_status === "Pending" && (
+                    <button
+                      className="secondary-button"
+                      onClick={() =>
+                        handleCompleteExternalApplication(
+                          application.external_application_id
+                        )
+                      }
+                      disabled={
+                        completingExternalApplicationId ===
+                        application.external_application_id
+                      }
+                    >
+                      {completingExternalApplicationId ===
+                      application.external_application_id
+                        ? "Completing..."
+                        : "Complete External Application"}
+                    </button>
+                  )}
+
+                  <a
+                    className="secondary-button link-button"
+                    href={application.job_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Source
+                  </a>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="panel">
