@@ -860,3 +860,99 @@ button:disabled {
 .resume-file-name {
   flex: 1 1 240px;
 }
+
+/* Interview management upgrade */
+.interview-manager-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.interview-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.interview-form-row label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.interview-form-row input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.compact-muted {
+  margin-top: 4px;
+}
+
+.upcoming-interview-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.upcoming-interview-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.upcoming-interview-card h3 {
+  margin: 10px 0 6px;
+}
+
+.upcoming-interview-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.link-button {
+  text-decoration: none;
+}
+
+.status-interview-rescheduled {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.status-interview-cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-rescheduled {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+@media (max-width: 700px) {
+  .interview-form-row,
+  .upcoming-interview-card {
+    grid-template-columns: 1fr;
+  }
+
+  .upcoming-interview-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

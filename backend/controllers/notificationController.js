@@ -17,6 +17,7 @@ const createNotification = async ({
   notificationType = "general",
   referenceType = null,
   referenceId = null,
+  replaceExisting = false,
 }) => {
   if (!candidateId || !message) {
     return null;
@@ -35,6 +36,21 @@ const createNotification = async ({
     );
 
     if (existingNotification.rows.length > 0) {
+      if (replaceExisting) {
+        const updatedNotification = await pool.query(
+          `UPDATE notifications
+           SET message=$1,
+               is_read=false,
+               created_at=NOW(),
+               updated_at=NOW()
+           WHERE notification_id=$2
+           RETURNING *`,
+          [message, existingNotification.rows[0].notification_id]
+        );
+
+        return updatedNotification.rows[0];
+      }
+
       return existingNotification.rows[0];
     }
   } else {
@@ -51,6 +67,21 @@ const createNotification = async ({
     );
 
     if (existingNotification.rows.length > 0) {
+      if (replaceExisting) {
+        const updatedNotification = await pool.query(
+          `UPDATE notifications
+           SET message=$1,
+               is_read=false,
+               created_at=NOW(),
+               updated_at=NOW()
+           WHERE notification_id=$2
+           RETURNING *`,
+          [message, existingNotification.rows[0].notification_id]
+        );
+
+        return updatedNotification.rows[0];
+      }
+
       return existingNotification.rows[0];
     }
   }
@@ -93,12 +124,17 @@ const getNotifications = async (req, res) => {
        LEFT JOIN interviews i
        ON n.reference_type='interview'
        AND n.reference_id=i.interview_id
-       AND COALESCE(i.status,'Scheduled')<>'Cancelled'
        WHERE n.candidate_id=$1
        AND (
         n.reference_type IS NULL
         OR n.reference_type<>'interview'
-        OR i.interview_id IS NOT NULL
+        OR (
+          i.interview_id IS NOT NULL
+          AND (
+            COALESCE(i.status,'Scheduled')<>'Cancelled'
+            OR n.notification_type='interview_cancelled'
+          )
+        )
        )
        ORDER BY n.created_at DESC, n.notification_id DESC`,
       [candidateId]

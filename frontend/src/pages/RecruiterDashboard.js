@@ -6,6 +6,8 @@ import {
   getApplicants,
   updateStatus,
   scheduleInterview,
+  rescheduleInterview,
+  cancelInterview,
   viewApplicantResume,
   downloadApplicantResume,
 } from "../services/recruiterService";
@@ -35,6 +37,30 @@ const splitSkills = (skills) => {
 };
 
 const displayValue = (value) => value || "Not added";
+
+const toDateInputValue = (value) => {
+  if (!value) {
+    return "2026-07-10";
+  }
+
+  return new Date(value).toISOString().slice(0, 10);
+};
+
+const toTimeInputValue = (value) => {
+  if (!value) {
+    return "10:30";
+  }
+
+  return String(value).slice(0, 5);
+};
+
+const formatInterviewDate = (value) => {
+  if (!value) {
+    return "Not scheduled";
+  }
+
+  return new Date(value).toLocaleDateString();
+};
 
 const renderExternalLink = (label, url) => {
   if (!url) {
@@ -89,6 +115,7 @@ function RecruiterDashboard() {
   const [busyResumeApplicationId, setBusyResumeApplicationId] = useState(null);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [expandedApplicationId, setExpandedApplicationId] = useState(null);
+  const [interviewForms, setInterviewForms] = useState({});
 
   useEffect(() => {
     fetchJobs();
@@ -135,9 +162,19 @@ function RecruiterDashboard() {
       setExpandedApplicationId(null);
 
       const response = await getApplicants(jobId, token);
+      const applicantRows =
+        response.data.rankedCandidates || response.data.applicants || [];
 
-      setApplicants(
-        response.data.rankedCandidates || response.data.applicants || []
+      setApplicants(applicantRows);
+      setInterviewForms(
+        applicantRows.reduce((formMap, candidate) => {
+          formMap[candidate.application_id] = {
+            interview_date: toDateInputValue(candidate.interview_date),
+            interview_time: toTimeInputValue(candidate.interview_time),
+          };
+
+          return formMap;
+        }, {})
       );
     } catch (error) {
       console.log("FETCH APPLICANTS ERROR:", error.response?.data || error.message);
@@ -189,35 +226,72 @@ function RecruiterDashboard() {
     }
   };
 
-  const handleInterview = async (applicationId, candidateId) => {
+  const handleInterviewInputChange = (applicationId, field, value) => {
+    setInterviewForms((currentForms) => ({
+      ...currentForms,
+      [applicationId]: {
+        ...(currentForms[applicationId] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const getInterviewForm = (candidate) =>
+    interviewForms[candidate.application_id] || {
+      interview_date: toDateInputValue(candidate.interview_date),
+      interview_time: toTimeInputValue(candidate.interview_time),
+    };
+
+  const updateCandidateInterviewState = (applicationId, interview, applicationStatus) => {
+    setApplicants((previousApplicants) =>
+      previousApplicants.map((candidate) =>
+        candidate.application_id === applicationId
+          ? {
+              ...candidate,
+              application_status: applicationStatus || "Interview Scheduled",
+              has_interview: true,
+              interview_scheduled: true,
+              interview_id: interview.interview_id,
+              interview_date: interview.interview_date,
+              interview_time: interview.interview_time,
+              meeting_link: interview.meeting_link,
+              interview_status: interview.status,
+              contact_visible: true,
+            }
+          : candidate
+      )
+    );
+
+    setInterviewForms((currentForms) => ({
+      ...currentForms,
+      [applicationId]: {
+        interview_date: toDateInputValue(interview.interview_date),
+        interview_time: toTimeInputValue(interview.interview_time),
+      },
+    }));
+  };
+
+  const handleInterview = async (candidate) => {
     try {
       const token = localStorage.getItem("token");
+      const interviewForm = getInterviewForm(candidate);
 
-      setBusyApplicationId(applicationId);
+      setBusyApplicationId(candidate.application_id);
       setActionMessage("");
 
       const response = await scheduleInterview(
         {
-          application_id: applicationId,
-          candidate_id: candidateId,
-          job_id: currentJobId,
-          interview_date: "2026-07-10",
-          interview_time: "10:30:00",
+          application_id: candidate.application_id,
+          interview_date: interviewForm.interview_date,
+          interview_time: interviewForm.interview_time,
         },
         token
       );
 
-      setApplicants((previousApplicants) =>
-        previousApplicants.map((candidate) =>
-          candidate.application_id === applicationId
-            ? {
-                ...candidate,
-                application_status: "Interview Scheduled",
-                has_interview: true,
-                contact_visible: true,
-              }
-            : candidate
-        )
+      updateCandidateInterviewState(
+        candidate.application_id,
+        response.data.interview,
+        "Interview Scheduled"
       );
 
       setActionMessage(response.data.message || "Interview scheduled");
@@ -227,22 +301,93 @@ function RecruiterDashboard() {
 
       console.log("INTERVIEW ERROR:", error.response?.data || error.message);
 
-      if (errorMessage.includes("already scheduled")) {
-        setApplicants((previousApplicants) =>
-          previousApplicants.map((candidate) =>
-            candidate.application_id === applicationId
-              ? {
-                  ...candidate,
-                  application_status: "Interview Scheduled",
-                  has_interview: true,
-                  contact_visible: true,
-                }
-              : candidate
-          )
+      if (error.response?.data?.interview) {
+        updateCandidateInterviewState(
+          candidate.application_id,
+          error.response.data.interview,
+          "Interview Scheduled"
         );
       }
 
       setActionMessage(errorMessage);
+    } finally {
+      setBusyApplicationId(null);
+    }
+  };
+
+  const handleRescheduleInterview = async (candidate) => {
+    try {
+      const token = localStorage.getItem("token");
+      const interviewForm = getInterviewForm(candidate);
+
+      if (!candidate.interview_id) {
+        setActionMessage("No interview exists for this application");
+        return;
+      }
+
+      setBusyApplicationId(candidate.application_id);
+      setActionMessage("");
+
+      const response = await rescheduleInterview(
+        candidate.interview_id,
+        {
+          interview_date: interviewForm.interview_date,
+          interview_time: interviewForm.interview_time,
+        },
+        token
+      );
+
+      updateCandidateInterviewState(
+        candidate.application_id,
+        response.data.interview,
+        "Interview Scheduled"
+      );
+
+      setActionMessage(response.data.message || "Interview rescheduled");
+    } catch (error) {
+      console.log("RESCHEDULE INTERVIEW ERROR:", error.response?.data || error.message);
+      setActionMessage(error.response?.data?.error || "Interview rescheduling failed");
+    } finally {
+      setBusyApplicationId(null);
+    }
+  };
+
+  const handleCancelInterview = async (candidate) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!candidate.interview_id) {
+        setActionMessage("No interview exists for this application");
+        return;
+      }
+
+      setBusyApplicationId(candidate.application_id);
+      setActionMessage("");
+
+      const response = await cancelInterview(candidate.interview_id, token);
+
+      setApplicants((previousApplicants) =>
+        previousApplicants.map((applicant) =>
+          applicant.application_id === candidate.application_id
+            ? {
+                ...applicant,
+                application_status:
+                  response.data.application?.application_status || "Shortlisted",
+                has_interview: false,
+                interview_scheduled: false,
+                interview_id: null,
+                interview_status: "Cancelled",
+                meeting_link: null,
+                contact_visible: true,
+              }
+            : applicant
+        )
+      );
+
+      setActionMessage(response.data.message || "Interview cancelled");
+    } catch (error) {
+      console.log("CANCEL INTERVIEW ERROR:", error.response?.data || error.message);
+      setActionMessage(error.response?.data?.error || "Interview cancellation failed");
     } finally {
       setBusyApplicationId(null);
     }
@@ -348,6 +493,91 @@ function RecruiterDashboard() {
               !candidate.portfolio_url &&
               "Not added"}
           </strong>
+        </div>
+      </div>
+    );
+  };
+
+  const renderInterviewManager = (candidate) => {
+    const interviewForm = getInterviewForm(candidate);
+    const canSchedule =
+      candidate.application_status === "Shortlisted" && !candidate.has_interview;
+    const canManageInterview =
+      candidate.has_interview && candidate.application_status !== "Rejected";
+
+    return (
+      <div className="interview-manager-card">
+        <div>
+          <p className="preview-label">Interview Management</p>
+          <p className="muted compact-muted">
+            {candidate.has_interview
+              ? `${candidate.interview_status || "Scheduled"} on ${formatInterviewDate(
+                  candidate.interview_date
+                )} at ${candidate.interview_time || "Not set"}`
+              : "Schedule an interview after shortlisting the candidate."}
+          </p>
+        </div>
+
+        <div className="interview-form-row">
+          <label>
+            Date
+            <input
+              type="date"
+              value={interviewForm.interview_date}
+              onChange={(event) =>
+                handleInterviewInputChange(
+                  candidate.application_id,
+                  "interview_date",
+                  event.target.value
+                )
+              }
+              disabled={candidate.application_status === "Rejected"}
+            />
+          </label>
+          <label>
+            Time
+            <input
+              type="time"
+              value={interviewForm.interview_time}
+              onChange={(event) =>
+                handleInterviewInputChange(
+                  candidate.application_id,
+                  "interview_time",
+                  event.target.value
+                )
+              }
+              disabled={candidate.application_status === "Rejected"}
+            />
+          </label>
+        </div>
+
+        <div className="button-row compact-row">
+          {!candidate.has_interview ? (
+            <button
+              className="secondary-button small-button"
+              onClick={() => handleInterview(candidate)}
+              disabled={!canSchedule || busyApplicationId === candidate.application_id}
+            >
+              Schedule Interview
+            </button>
+          ) : (
+            <>
+              <button
+                className="secondary-button small-button"
+                onClick={() => handleRescheduleInterview(candidate)}
+                disabled={!canManageInterview || busyApplicationId === candidate.application_id}
+              >
+                Reschedule
+              </button>
+              <button
+                className="danger-button small-button"
+                onClick={() => handleCancelInterview(candidate)}
+                disabled={!canManageInterview || busyApplicationId === candidate.application_id}
+              >
+                Cancel Interview
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -463,6 +693,8 @@ function RecruiterDashboard() {
           <strong>{candidate.score_breakdown?.experience_score ?? "N/A"}</strong>
         </div>
       </div>
+
+      {renderInterviewManager(candidate)}
 
       <div className="preview-footer resume-footer">
         <div className="resume-file-name">
@@ -661,25 +893,26 @@ function RecruiterDashboard() {
                       Reject
                     </button>
 
-                    <button
-                      className="secondary-button"
-                      disabled={
-                        candidate.application_status === "Interview Scheduled" ||
-                        candidate.application_status === "Rejected" ||
-                        candidate.has_interview ||
-                        busyApplicationId === candidate.application_id
-                      }
-                      onClick={() =>
-                        handleInterview(
-                          candidate.application_id,
-                          candidate.candidate_id
-                        )
-                      }
-                    >
-                      {candidate.has_interview
-                        ? "Interview Scheduled"
-                        : "Schedule Interview"}
-                    </button>
+                    {candidate.has_interview ? (
+                      <button
+                        className="secondary-button"
+                        disabled={busyApplicationId === candidate.application_id}
+                        onClick={() => handleRescheduleInterview(candidate)}
+                      >
+                        Reschedule
+                      </button>
+                    ) : (
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          candidate.application_status !== "Shortlisted" ||
+                          busyApplicationId === candidate.application_id
+                        }
+                        onClick={() => handleInterview(candidate)}
+                      >
+                        Schedule Interview
+                      </button>
+                    )}
                   </div>
                 </article>
               );

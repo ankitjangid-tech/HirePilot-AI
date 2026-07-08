@@ -26,6 +26,14 @@ export const scheduleInterview = (data, token) => {
   return API.post("/interviews/schedule", data, authHeaders(token));
 };
 
+export const rescheduleInterview = (interviewId, data, token) => {
+  return API.put(`/interviews/${interviewId}/reschedule`, data, authHeaders(token));
+};
+
+export const cancelInterview = (interviewId, token) => {
+  return API.put(`/interviews/${interviewId}/cancel`, {}, authHeaders(token));
+};
+
 export const viewApplicantResume = (applicationId, token) => {
   return API.get(`/resume/applicant/${applicationId}`, {
     ...authHeaders(token),

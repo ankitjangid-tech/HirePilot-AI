@@ -54,6 +54,8 @@ const notificationLabels = {
   rejected: "Rejected",
   selected: "Selected",
   interview_scheduled: "Interview",
+  interview_rescheduled: "Rescheduled",
+  interview_cancelled: "Cancelled",
   general: "Update",
 };
 
@@ -455,6 +457,13 @@ function CandidateDashboard() {
       setNotificationActionLoading(false);
     }
   };
+
+  const upcomingInterviews = notifications.filter(
+    (notification) =>
+      notification.reference_type === "interview" &&
+      notification.interview_date &&
+      notification.notification_type !== "interview_cancelled"
+  );
 
   return (
     <main className="dashboard-shell">
@@ -906,6 +915,48 @@ function CandidateDashboard() {
       </section>
 
       <section className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Interviews</p>
+            <h2>Upcoming Interviews</h2>
+          </div>
+          <span className="count-pill">{upcomingInterviews.length}</span>
+        </div>
+
+        {upcomingInterviews.length === 0 ? (
+          <p className="empty-state">No upcoming interviews.</p>
+        ) : (
+          <div className="upcoming-interview-grid">
+            {upcomingInterviews.map((interview, index) => (
+              <article
+                className="upcoming-interview-card"
+                key={interview.reference_id || interview.notification_id || index}
+              >
+                <div>
+                  <span className={notificationClass(interview.notification_type)}>
+                    {notificationLabels[interview.notification_type] || "Interview"}
+                  </span>
+                  <h3>{interview.message}</h3>
+                  <p>
+                    {new Date(interview.interview_date).toLocaleDateString()} at{" "}
+                    {interview.interview_time}
+                  </p>
+                </div>
+                <a
+                  className="secondary-button small-button link-button"
+                  href={interview.meeting_link}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Join Meeting
+                </a>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
         <div className="section-heading notification-heading">
           <div>
             <p className="eyebrow">Updates</p>
@@ -972,13 +1023,17 @@ function CandidateDashboard() {
                     <p>
                       <strong>Time:</strong> {notification.interview_time}
                     </p>
-                    <a
-                      href={notification.meeting_link}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Join Meeting
-                    </a>
+                    {notification.notification_type === "interview_cancelled" ? (
+                      <p className="muted">This interview is no longer active.</p>
+                    ) : (
+                      <a
+                        href={notification.meeting_link}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Join Meeting
+                      </a>
+                    )}
                   </div>
                 )}
 
