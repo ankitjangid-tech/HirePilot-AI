@@ -1,5 +1,11 @@
 const pool = require("../config/db");
 
+const CONTACT_VISIBLE_STATUSES = new Set([
+  "Shortlisted",
+  "Interview Scheduled",
+  "Selected",
+]);
+
 const normalizeSkills = (skillsText) => {
   if (!skillsText) {
     return [];
@@ -23,9 +29,9 @@ const rankApplicants = async (req, res) => {
     }
 
     /*
-      Important project-specific schema note:
-      In this project, jobs.recruiter_id currently stores the logged-in
-      recruiter's user_id. So we should not join recruiters here.
+      Project-specific schema note:
+      jobs.recruiter_id currently stores the logged-in recruiter user's user_id.
+      Do not join recruiters here unless the schema is changed later.
     */
     const jobCheck = await pool.query(
       `SELECT
@@ -33,6 +39,7 @@ const rankApplicants = async (req, res) => {
         job_title,
         company_name,
         required_skills,
+        experience_required,
         salary,
         location
        FROM jobs
@@ -65,6 +72,16 @@ const rankApplicants = async (req, res) => {
         c.expected_salary,
         c.resume_url,
         c.ats_score,
+        c.phone_number,
+        c.current_location,
+        c.address,
+        c.linkedin_url,
+        c.github_url,
+        c.portfolio_url,
+        c.education,
+        c.projects,
+        c.certifications,
+        c.professional_summary,
 
         u.full_name,
         u.email,
@@ -123,13 +140,21 @@ const rankApplicants = async (req, res) => {
         atsScore + experienceScore + skillMatchScore - missingSkillPenalty
       );
 
+      const contactVisible = CONTACT_VISIBLE_STATUSES.has(
+        candidate.application_status
+      );
+
       return {
         application_id: candidate.application_id,
         job_id: candidate.job_id,
         candidate_id: candidate.candidate_id,
 
         full_name: candidate.full_name,
-        email: candidate.email,
+        email: contactVisible ? candidate.email : null,
+        phone_number: contactVisible ? candidate.phone_number : null,
+        address: contactVisible ? candidate.address : null,
+        contact_visible: contactVisible,
+
         skills: candidate.skills,
         experience_years: candidate.experience_years,
         preferred_role: candidate.preferred_role,
@@ -137,6 +162,14 @@ const rankApplicants = async (req, res) => {
         expected_salary: candidate.expected_salary,
         resume_url: candidate.resume_url,
         ats_score: candidate.ats_score,
+        current_location: candidate.current_location,
+        linkedin_url: candidate.linkedin_url,
+        github_url: candidate.github_url,
+        portfolio_url: candidate.portfolio_url,
+        education: candidate.education,
+        projects: candidate.projects,
+        certifications: candidate.certifications,
+        professional_summary: candidate.professional_summary,
 
         application_status: candidate.application_status,
         applied_at: candidate.applied_at,

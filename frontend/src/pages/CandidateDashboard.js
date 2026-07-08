@@ -20,11 +20,23 @@ import {
 } from "../services/applicationService";
 
 const emptyProfileForm = {
+  full_name: "",
+  email: "",
   skills: "",
   experience_years: "",
   preferred_role: "",
   preferred_location: "",
   expected_salary: "",
+  phone_number: "",
+  current_location: "",
+  address: "",
+  linkedin_url: "",
+  github_url: "",
+  portfolio_url: "",
+  education: "",
+  projects: "",
+  certifications: "",
+  professional_summary: "",
 };
 
 const fieldLabels = {
@@ -44,6 +56,8 @@ const notificationLabels = {
 };
 
 const buildProfileForm = (profile) => ({
+  full_name: profile?.full_name || "",
+  email: profile?.email || "",
   skills: profile?.skills || "",
   experience_years:
     profile?.experience_years === null || profile?.experience_years === undefined
@@ -52,6 +66,16 @@ const buildProfileForm = (profile) => ({
   preferred_role: profile?.preferred_role || "",
   preferred_location: profile?.preferred_location || "",
   expected_salary: profile?.expected_salary || "",
+  phone_number: profile?.phone_number || "",
+  current_location: profile?.current_location || "",
+  address: profile?.address || "",
+  linkedin_url: profile?.linkedin_url || "",
+  github_url: profile?.github_url || "",
+  portfolio_url: profile?.portfolio_url || "",
+  education: profile?.education || "",
+  projects: profile?.projects || "",
+  certifications: profile?.certifications || "",
+  professional_summary: profile?.professional_summary || "",
 });
 
 const statusClass = (status) =>
@@ -63,6 +87,8 @@ const notificationClass = (type) =>
   `status-badge status-${String(type || "general")
     .toLowerCase()
     .replace(/_/g, "-")}`;
+
+const displayValue = (value) => value || "Not added";
 
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
@@ -189,6 +215,7 @@ function CandidateDashboard() {
       setProfileMessage("Saving profile...");
 
       const payload = {
+        full_name: profileForm.full_name,
         skills: profileForm.skills,
         experience_years:
           profileForm.experience_years === ""
@@ -197,6 +224,16 @@ function CandidateDashboard() {
         preferred_role: profileForm.preferred_role,
         preferred_location: profileForm.preferred_location,
         expected_salary: profileForm.expected_salary,
+        phone_number: profileForm.phone_number,
+        current_location: profileForm.current_location,
+        address: profileForm.address,
+        linkedin_url: profileForm.linkedin_url,
+        github_url: profileForm.github_url,
+        portfolio_url: profileForm.portfolio_url,
+        education: profileForm.education,
+        projects: profileForm.projects,
+        certifications: profileForm.certifications,
+        professional_summary: profileForm.professional_summary,
       };
 
       const response = await updateProfile(token, payload);
@@ -393,8 +430,24 @@ function CandidateDashboard() {
 
             <div className="detail-grid">
               <div>
+                <span>Name</span>
+                <strong>{displayValue(profile.full_name)}</strong>
+              </div>
+              <div>
+                <span>Email</span>
+                <strong>{displayValue(profile.email)}</strong>
+              </div>
+              <div>
+                <span>Phone</span>
+                <strong>{displayValue(profile.phone_number)}</strong>
+              </div>
+              <div>
+                <span>Current Location</span>
+                <strong>{displayValue(profile.current_location)}</strong>
+              </div>
+              <div>
                 <span>Skills</span>
-                <strong>{profile.skills || "Not added"}</strong>
+                <strong>{displayValue(profile.skills)}</strong>
               </div>
               <div>
                 <span>Experience</span>
@@ -407,20 +460,25 @@ function CandidateDashboard() {
               </div>
               <div>
                 <span>Preferred Role</span>
-                <strong>{profile.preferred_role || "Not added"}</strong>
+                <strong>{displayValue(profile.preferred_role)}</strong>
               </div>
               <div>
                 <span>Preferred Location</span>
-                <strong>{profile.preferred_location || "Not added"}</strong>
+                <strong>{displayValue(profile.preferred_location)}</strong>
               </div>
               <div>
                 <span>Expected Salary</span>
-                <strong>{profile.expected_salary || "Not added"}</strong>
+                <strong>{displayValue(profile.expected_salary)}</strong>
               </div>
               <div>
                 <span>ATS Score</span>
                 <strong>{profile.ats_score ?? "Not generated"}</strong>
               </div>
+            </div>
+
+            <div className="profile-summary-block">
+              <span>Professional Summary</span>
+              <p>{displayValue(profile.professional_summary)}</p>
             </div>
           </div>
 
@@ -450,57 +508,191 @@ function CandidateDashboard() {
             {resumeMessage && <p className="helper-text">{resumeMessage}</p>}
 
             <div className="form-grid">
-              <label>
-                Skills
-                <input
-                  name="skills"
-                  value={profileForm.skills}
-                  onChange={handleProfileInputChange}
-                  placeholder="Python, SQL, React"
-                />
-              </label>
+              <div className="profile-form-section">
+                <h3>Core Matching Details</h3>
+                <label>
+                  Skills
+                  <input
+                    name="skills"
+                    value={profileForm.skills}
+                    onChange={handleProfileInputChange}
+                    placeholder="Python, SQL, React"
+                  />
+                </label>
 
-              <label>
-                Experience Years
-                <input
-                  name="experience_years"
-                  type="number"
-                  min="0"
-                  value={profileForm.experience_years}
-                  onChange={handleProfileInputChange}
-                  placeholder="0"
-                />
-              </label>
+                <label>
+                  Experience Years
+                  <input
+                    name="experience_years"
+                    type="number"
+                    min="0"
+                    value={profileForm.experience_years}
+                    onChange={handleProfileInputChange}
+                    placeholder="0"
+                  />
+                </label>
 
-              <label>
-                Preferred Role
-                <input
-                  name="preferred_role"
-                  value={profileForm.preferred_role}
-                  onChange={handleProfileInputChange}
-                  placeholder="AI Engineer"
-                />
-              </label>
+                <label>
+                  Preferred Role
+                  <input
+                    name="preferred_role"
+                    value={profileForm.preferred_role}
+                    onChange={handleProfileInputChange}
+                    placeholder="AI Engineer"
+                  />
+                </label>
 
-              <label>
-                Preferred Location
-                <input
-                  name="preferred_location"
-                  value={profileForm.preferred_location}
-                  onChange={handleProfileInputChange}
-                  placeholder="Jaipur, Remote"
-                />
-              </label>
+                <label>
+                  Preferred Location
+                  <input
+                    name="preferred_location"
+                    value={profileForm.preferred_location}
+                    onChange={handleProfileInputChange}
+                    placeholder="Jaipur, Remote"
+                  />
+                </label>
 
-              <label>
-                Expected Salary
-                <input
-                  name="expected_salary"
-                  value={profileForm.expected_salary}
-                  onChange={handleProfileInputChange}
-                  placeholder="10 LPA"
-                />
-              </label>
+                <label>
+                  Expected Salary
+                  <input
+                    name="expected_salary"
+                    value={profileForm.expected_salary}
+                    onChange={handleProfileInputChange}
+                    placeholder="10 LPA"
+                  />
+                </label>
+              </div>
+
+              <div className="profile-form-section">
+                <h3>Personal Contact Details</h3>
+                <p className="privacy-note">
+                  Email is login identity and cannot be changed here. Recruiters see
+                  contact details only after shortlist/interview stages.
+                </p>
+
+                <label>
+                  Full Name
+                  <input
+                    name="full_name"
+                    value={profileForm.full_name}
+                    onChange={handleProfileInputChange}
+                    placeholder="Candidate name"
+                  />
+                </label>
+
+                <label>
+                  Email
+                  <input name="email" value={profileForm.email} disabled />
+                </label>
+
+                <label>
+                  Phone Number
+                  <input
+                    name="phone_number"
+                    value={profileForm.phone_number}
+                    onChange={handleProfileInputChange}
+                    placeholder="+91 90000 00000"
+                  />
+                </label>
+
+                <label>
+                  Current Location
+                  <input
+                    name="current_location"
+                    value={profileForm.current_location}
+                    onChange={handleProfileInputChange}
+                    placeholder="Jaipur, Rajasthan"
+                  />
+                </label>
+
+                <label>
+                  Address
+                  <textarea
+                    name="address"
+                    value={profileForm.address}
+                    onChange={handleProfileInputChange}
+                    placeholder="Optional full address"
+                    rows="3"
+                  />
+                </label>
+              </div>
+
+              <div className="profile-form-section">
+                <h3>Professional Links & Details</h3>
+                <label>
+                  LinkedIn URL
+                  <input
+                    name="linkedin_url"
+                    value={profileForm.linkedin_url}
+                    onChange={handleProfileInputChange}
+                    placeholder="https://linkedin.com/in/username"
+                  />
+                </label>
+
+                <label>
+                  GitHub URL
+                  <input
+                    name="github_url"
+                    value={profileForm.github_url}
+                    onChange={handleProfileInputChange}
+                    placeholder="https://github.com/username"
+                  />
+                </label>
+
+                <label>
+                  Portfolio URL
+                  <input
+                    name="portfolio_url"
+                    value={profileForm.portfolio_url}
+                    onChange={handleProfileInputChange}
+                    placeholder="https://yourportfolio.com"
+                  />
+                </label>
+
+                <label>
+                  Education
+                  <textarea
+                    name="education"
+                    value={profileForm.education}
+                    onChange={handleProfileInputChange}
+                    placeholder="MCA, B.Tech, certifications, college details"
+                    rows="3"
+                  />
+                </label>
+
+                <label>
+                  Projects
+                  <textarea
+                    name="projects"
+                    value={profileForm.projects}
+                    onChange={handleProfileInputChange}
+                    placeholder="Important projects with tech stack and impact"
+                    rows="4"
+                  />
+                </label>
+
+                <label>
+                  Certifications
+                  <textarea
+                    name="certifications"
+                    value={profileForm.certifications}
+                    onChange={handleProfileInputChange}
+                    placeholder="AWS, Google, Coursera, internship certificates"
+                    rows="3"
+                  />
+                </label>
+
+                <label>
+                  Professional Summary
+                  <textarea
+                    name="professional_summary"
+                    value={profileForm.professional_summary}
+                    onChange={handleProfileInputChange}
+                    placeholder="Brief candidate summary for recruiters"
+                    rows="4"
+                  />
+                </label>
+              </div>
 
               <button
                 className="primary-button"

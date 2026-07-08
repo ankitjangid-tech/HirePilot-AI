@@ -32,6 +32,22 @@ const splitSkills = (skills) => {
     .filter(Boolean);
 };
 
+const displayValue = (value) => value || "Not added";
+
+const renderExternalLink = (label, url) => {
+  if (!url) {
+    return null;
+  }
+
+  const safeUrl = String(url).startsWith("http") ? url : `https://${url}`;
+
+  return (
+    <a href={safeUrl} target="_blank" rel="noreferrer">
+      {label}
+    </a>
+  );
+};
+
 function RecruiterDashboard() {
   const [jobs, setJobs] = useState([]);
   const [applicants, setApplicants] = useState([]);
@@ -123,6 +139,12 @@ function RecruiterDashboard() {
             ? {
                 ...candidate,
                 application_status: response.data.application.application_status,
+                contact_visible:
+                  response.data.application.application_status === "Shortlisted" ||
+                  response.data.application.application_status ===
+                    "Interview Scheduled" ||
+                  response.data.application.application_status === "Selected" ||
+                  candidate.contact_visible,
               }
             : candidate
         )
@@ -162,6 +184,7 @@ function RecruiterDashboard() {
                 ...candidate,
                 application_status: "Interview Scheduled",
                 has_interview: true,
+                contact_visible: true,
               }
             : candidate
         )
@@ -182,6 +205,7 @@ function RecruiterDashboard() {
                   ...candidate,
                   application_status: "Interview Scheduled",
                   has_interview: true,
+                  contact_visible: true,
                 }
               : candidate
           )
@@ -200,25 +224,85 @@ function RecruiterDashboard() {
     );
   };
 
+  const renderContactDetails = (candidate) => {
+    if (!candidate.contact_visible) {
+      return (
+        <div className="privacy-note recruiter-note">
+          Contact details are shown after shortlist/interview stages to protect
+          candidate privacy.
+        </div>
+      );
+    }
+
+    return (
+      <div className="preview-grid">
+        <div>
+          <span>Email</span>
+          <strong>{displayValue(candidate.email)}</strong>
+        </div>
+        <div>
+          <span>Phone</span>
+          <strong>{displayValue(candidate.phone_number)}</strong>
+        </div>
+        <div>
+          <span>Address</span>
+          <strong>{displayValue(candidate.address)}</strong>
+        </div>
+        <div>
+          <span>Links</span>
+          <strong className="link-list">
+            {renderExternalLink("LinkedIn", candidate.linkedin_url)}
+            {renderExternalLink("GitHub", candidate.github_url)}
+            {renderExternalLink("Portfolio", candidate.portfolio_url)}
+            {!candidate.linkedin_url &&
+              !candidate.github_url &&
+              !candidate.portfolio_url &&
+              "Not added"}
+          </strong>
+        </div>
+      </div>
+    );
+  };
+
   const renderCandidateDetails = (candidate) => (
     <div className="candidate-preview-box">
       <div className="preview-grid">
         <div>
           <span>Preferred Role</span>
-          <strong>{candidate.preferred_role || "Not added"}</strong>
+          <strong>{displayValue(candidate.preferred_role)}</strong>
         </div>
         <div>
           <span>Preferred Location</span>
-          <strong>{candidate.preferred_location || "Not added"}</strong>
+          <strong>{displayValue(candidate.preferred_location)}</strong>
+        </div>
+        <div>
+          <span>Current Location</span>
+          <strong>{displayValue(candidate.current_location)}</strong>
         </div>
         <div>
           <span>Expected Salary</span>
-          <strong>{candidate.expected_salary || "Not added"}</strong>
+          <strong>{displayValue(candidate.expected_salary)}</strong>
+        </div>
+        <div>
+          <span>Education</span>
+          <strong>{displayValue(candidate.education)}</strong>
         </div>
         <div>
           <span>Applied At</span>
           <strong>{formatDate(candidate.applied_at)}</strong>
         </div>
+      </div>
+
+      <div className="preview-section">
+        <p className="preview-label">Professional Summary</p>
+        <p className="preview-text-block">
+          {displayValue(candidate.professional_summary)}
+        </p>
+      </div>
+
+      <div className="preview-section">
+        <p className="preview-label">Contact Details</p>
+        {renderContactDetails(candidate)}
       </div>
 
       <div className="preview-section">
@@ -264,6 +348,18 @@ function RecruiterDashboard() {
         </div>
       )}
 
+      <div className="preview-section">
+        <p className="preview-label">Projects</p>
+        <p className="preview-text-block">{displayValue(candidate.projects)}</p>
+      </div>
+
+      <div className="preview-section">
+        <p className="preview-label">Certifications</p>
+        <p className="preview-text-block">
+          {displayValue(candidate.certifications)}
+        </p>
+      </div>
+
       <div className="score-breakdown-grid">
         <div>
           <span>ATS Contribution</span>
@@ -283,9 +379,7 @@ function RecruiterDashboard() {
         <span>
           Resume: {candidate.resume_url ? candidate.resume_url : "Not uploaded"}
         </span>
-        {candidate.has_interview && (
-          <span>Interview already scheduled</span>
-        )}
+        {candidate.has_interview && <span>Interview already scheduled</span>}
       </div>
     </div>
   );
@@ -401,7 +495,11 @@ function RecruiterDashboard() {
                     </div>
                     <div>
                       <span>Location</span>
-                      <strong>{candidate.preferred_location || "N/A"}</strong>
+                      <strong>
+                        {candidate.current_location ||
+                          candidate.preferred_location ||
+                          "N/A"}
+                      </strong>
                     </div>
                   </div>
 
