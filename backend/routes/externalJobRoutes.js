@@ -10,6 +10,7 @@ const {
   getMyExternalApplications,
   getExternalAgentLogs,
   getExternalAgentRuns,
+  getExternalWorkerHealth,
   applyExternalJob,
   completeExternalApplication,
 } = require("../controllers/externalJobController");
@@ -40,6 +41,13 @@ router.get(
   verifyToken,
   authorizeRole("candidate"),
   getExternalAgentRuns
+);
+
+router.get(
+  "/worker-health",
+  verifyToken,
+  authorizeRole("candidate"),
+  getExternalWorkerHealth
 );
 
 router.post(

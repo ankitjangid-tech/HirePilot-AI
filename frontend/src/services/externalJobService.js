@@ -45,3 +45,7 @@ export const completeExternalApplication = (token, externalApplicationId) => {
     authHeader(token)
   );
 };
+
+export const getExternalWorkerHealth = (token) => {
+  return API.get("/external-jobs/worker-health", authHeader(token));
+};

@@ -25,6 +25,7 @@ import {
   getExternalApplications,
   getExternalAgentLogs,
   getExternalAgentRuns,
+  getExternalWorkerHealth,
   applyExternalJob,
   completeExternalApplication,
 } from "../services/externalJobService";
@@ -99,6 +100,10 @@ const agentStepLabels = {
   waiting_for_candidate: "Waiting for candidate",
   duplicate_application_detected: "Duplicate detected",
   skipped_low_match: "Skipped: low match",
+  worker_received: "Python worker received task",
+  worker_simulated_submit: "Worker simulated submit",
+  worker_unavailable_fallback: "Worker fallback used",
+  worker_failed: "Worker failed",
   candidate_confirmation_received: "Candidate confirmation received",
   external_status_updated: "External status updated",
   completion_skipped: "Completion skipped",
@@ -183,6 +188,7 @@ function CandidateDashboard() {
   const [externalApplications, setExternalApplications] = useState([]);
   const [externalAgentLogs, setExternalAgentLogs] = useState([]);
   const [externalAgentRuns, setExternalAgentRuns] = useState([]);
+  const [externalWorkerHealth, setExternalWorkerHealth] = useState(null);
   const [applications, setApplications] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -228,6 +234,18 @@ function CandidateDashboard() {
       setExternalApplications(
         externalApplicationsResponse.data.externalApplications || []
       );
+
+
+      try {
+        const workerHealthResponse = await getExternalWorkerHealth(token);
+        setExternalWorkerHealth(workerHealthResponse.data);
+      } catch (workerHealthError) {
+        console.log(
+          "EXTERNAL WORKER HEALTH FETCH ERROR:",
+          workerHealthError.response?.data || workerHealthError.message
+        );
+        setExternalWorkerHealth(null);
+      }
 
       try {
         const externalAgentLogsResponse = await getExternalAgentLogs(token);
@@ -1229,9 +1247,27 @@ function CandidateDashboard() {
             <h2>Agent Run Timeline</h2>
             <p className="muted">
               Each external apply action now creates an agent run with clear
-              steps. Future LangGraph and Playwright workers will update these
-              runs while real browser automation is executing.
+              steps. The Python worker stub can update these runs while future
+              LangGraph and Playwright automation executes.
             </p>
+            {externalWorkerHealth && (
+              <p className="worker-status-line">
+                Worker mode: {" "}
+                <span
+                  className={
+                    externalWorkerHealth.online
+                      ? "worker-status online"
+                      : "worker-status offline"
+                  }
+                >
+                  {externalWorkerHealth.online
+                    ? "Python worker online"
+                    : externalWorkerHealth.worker_enabled
+                    ? "Python worker offline, Node fallback active"
+                    : "Node local fallback"}
+                </span>
+              </p>
+            )}
           </div>
           <span className="count-pill">{externalAgentRuns.length}</span>
         </div>

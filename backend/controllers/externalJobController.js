@@ -1,3 +1,4 @@
+const axios = require("axios");
 const pool = require("../config/db");
 
 const splitSkills = (skills) => {
@@ -90,6 +91,12 @@ const isProfileIncomplete = (candidate) => {
   );
 };
 
+const workerBaseUrl = () =>
+  String(process.env.AI_WORKER_URL || "http://localhost:8000").replace(/\/$/, "");
+
+const isWorkerEnabled = () =>
+  String(process.env.AI_WORKER_ENABLED || "false").toLowerCase() === "true";
+
 const logAgentAttempt = async ({
   candidate_id,
   external_job_id = null,
@@ -137,6 +144,8 @@ const createAgentRun = async ({
   external_application_id = null,
   requested_by_user_id = null,
   run_type = "external_apply",
+  run_status = "running",
+  agent_name = "external_apply_orchestrator",
   source_platform = null,
   current_step = "queued",
   metadata = {},
@@ -163,9 +172,9 @@ const createAgentRun = async ({
         candidate_id,
         external_job_id,
         external_application_id,
-        "external_apply_orchestrator",
+        agent_name,
         run_type,
-        "running",
+        run_status,
         source_platform,
         requested_by_user_id,
         "candidate_approved",
@@ -256,6 +265,179 @@ const finishAgentRun = async ({
   } catch (error) {
     console.log("AGENT RUN FINISH ERROR:", error.message);
   }
+};
+
+const callPythonWorker = async ({ agentRunId, candidate, job, match, userId }) => {
+  if (!isWorkerEnabled()) {
+    return null;
+  }
+
+  try {
+    const response = await axios.post(
+      `${workerBaseUrl()}/simulate-external-apply`,
+      {
+        agent_run_id: agentRunId,
+        candidate_id: candidate.candidate_id,
+        external_job_id: job.external_job_id,
+        requested_by_user_id: userId,
+        job_title: job.job_title,
+        company_name: job.company_name,
+        source_platform: job.source_platform,
+        job_url: job.job_url,
+        apply_mode: job.apply_mode,
+        match_score: match.match_score,
+        matched_skills: match.matched_skills,
+        missing_skills: match.missing_skills,
+        preferred_role: candidate.preferred_role,
+        preferred_location: candidate.preferred_location,
+        experience_years: candidate.experience_years,
+      },
+      {
+        timeout: Number(process.env.AI_WORKER_TIMEOUT_MS || 15000),
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.log(
+      "PYTHON WORKER UNAVAILABLE, USING LOCAL FALLBACK:",
+      error.response?.data || error.message
+    );
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "worker_unavailable_fallback",
+      step_status: "failed",
+      step_order: 1,
+      details:
+        "Python worker was enabled but unavailable. Node backend continued with local safe fallback.",
+      metadata: {
+        worker_url: workerBaseUrl(),
+        error: error.message,
+      },
+    });
+
+    return null;
+  }
+};
+
+const processExternalApplyLocally = async ({ agentRunId, candidate, job, match }) => {
+  await addAgentRunStep({
+    agent_run_id: agentRunId,
+    step_name: "candidate_approval_received",
+    step_order: 2,
+    details: "Candidate clicked Apply with HirePilot for this external job.",
+  });
+
+  await addAgentRunStep({
+    agent_run_id: agentRunId,
+    step_name: "profile_loaded",
+    step_order: 3,
+    details: "Candidate profile and preferences loaded for external matching.",
+    metadata: {
+      preferred_role: candidate.preferred_role,
+      preferred_location: candidate.preferred_location,
+      experience_years: candidate.experience_years,
+    },
+  });
+
+  await addAgentRunStep({
+    agent_run_id: agentRunId,
+    step_name: "match_score_calculated",
+    step_order: 4,
+    details: `External job match score calculated as ${match.match_score}%.`,
+    metadata: {
+      match_score: match.match_score,
+      matched_skills: match.matched_skills,
+      missing_skills: match.missing_skills,
+    },
+  });
+
+  const canAutoComplete = job.apply_mode === "easy_apply" && match.match_score >= 60;
+  const applicationStatus = canAutoComplete ? "Applied" : "Pending";
+  const failureReason = canAutoComplete
+    ? null
+    : "Manual action needed: external portal may require questions, login, CAPTCHA, or candidate review.";
+
+  await addAgentRunStep({
+    agent_run_id: agentRunId,
+    step_name: "external_portal_assessed",
+    step_order: 5,
+    details: canAutoComplete
+      ? "External source is safe for simulated auto-apply."
+      : "External source requires candidate review or manual completion.",
+    metadata: {
+      apply_mode: job.apply_mode,
+      can_auto_complete: canAutoComplete,
+      fallback_mode: "node_local_fallback",
+    },
+  });
+
+  const application = await pool.query(
+    `INSERT INTO external_applications (
+      candidate_id,
+      external_job_id,
+      application_status,
+      failure_reason
+     )
+     VALUES ($1, $2, $3, $4)
+     RETURNING *`,
+    [candidate.candidate_id, job.external_job_id, applicationStatus, failureReason]
+  );
+
+  await addAgentRunStep({
+    agent_run_id: agentRunId,
+    step_name: "application_record_created",
+    step_order: 6,
+    details: `External application record created with status ${applicationStatus}.`,
+    metadata: {
+      external_application_id: application.rows[0].external_application_id,
+      application_status: applicationStatus,
+    },
+  });
+
+  await logAgentAttempt({
+    candidate_id: candidate.candidate_id,
+    external_job_id: job.external_job_id,
+    external_application_id: application.rows[0].external_application_id,
+    action_type: "external_apply_attempt",
+    attempt_status: canAutoComplete ? "auto_applied" : "pending_manual_action",
+    source_platform: job.source_platform,
+    failure_reason: failureReason,
+    metadata: {
+      match_score: match.match_score,
+      matched_skills: match.matched_skills,
+      missing_skills: match.missing_skills,
+      apply_mode: job.apply_mode,
+      agent_run_id: agentRunId,
+      worker_mode: isWorkerEnabled() ? "node_fallback_after_worker_unavailable" : "node_local",
+    },
+  });
+
+  await finishAgentRun({
+    agent_run_id: agentRunId,
+    run_status: canAutoComplete ? "completed" : "needs_manual_action",
+    current_step: canAutoComplete ? "completed" : "waiting_for_candidate",
+    summary: canAutoComplete
+      ? "External application submitted through simulated easy apply."
+      : "External application needs manual completion by candidate.",
+    external_application_id: application.rows[0].external_application_id,
+    metadata: {
+      match_score: match.match_score,
+      matched_skills: match.matched_skills,
+      missing_skills: match.missing_skills,
+      apply_mode: job.apply_mode,
+      worker_mode: isWorkerEnabled() ? "node_fallback" : "node_local",
+    },
+  });
+
+  return {
+    message: canAutoComplete
+      ? "External application submitted"
+      : "External application needs manual completion",
+    externalApplication: application.rows[0],
+    canAutoComplete,
+  };
 };
 
 const getMatchedExternalJobs = async (req, res) => {
@@ -485,6 +667,40 @@ const getExternalAgentRuns = async (req, res) => {
   }
 };
 
+const getExternalWorkerHealth = async (req, res) => {
+  if (!isWorkerEnabled()) {
+    return res.status(200).json({
+      worker_enabled: false,
+      online: false,
+      mode: "node_local_orchestration",
+      message: "Python worker is disabled. Node backend will use local safe fallback.",
+    });
+  }
+
+  try {
+    const response = await axios.get(`${workerBaseUrl()}/health`, {
+      timeout: Number(process.env.AI_WORKER_HEALTH_TIMEOUT_MS || 5000),
+    });
+
+    return res.status(200).json({
+      worker_enabled: true,
+      online: response.data?.status === "online",
+      mode: "python_worker_stub",
+      worker_url: workerBaseUrl(),
+      worker: response.data,
+    });
+  } catch (error) {
+    return res.status(200).json({
+      worker_enabled: true,
+      online: false,
+      mode: "node_fallback_when_worker_offline",
+      worker_url: workerBaseUrl(),
+      message: "Python worker is configured but currently unavailable.",
+      error: error.message,
+    });
+  }
+};
+
 const applyExternalJob = async (req, res) => {
   let agentRunId = null;
 
@@ -533,43 +749,19 @@ const applyExternalJob = async (req, res) => {
       external_job_id,
       requested_by_user_id: req.user.user_id,
       run_type: "external_apply",
+      run_status: isWorkerEnabled() ? "queued" : "running",
+      agent_name: isWorkerEnabled()
+        ? "external_apply_orchestrator_python_worker"
+        : "external_apply_orchestrator",
       source_platform: job.source_platform,
-      current_step: "candidate_approval_received",
+      current_step: isWorkerEnabled()
+        ? "queued_for_python_worker"
+        : "candidate_approval_received",
       metadata: {
         job_title: job.job_title,
         company_name: job.company_name,
         apply_mode: job.apply_mode,
-      },
-    });
-
-    await addAgentRunStep({
-      agent_run_id: agentRunId,
-      step_name: "candidate_approval_received",
-      step_order: 1,
-      details: "Candidate clicked Apply with HirePilot for this external job.",
-    });
-
-    await addAgentRunStep({
-      agent_run_id: agentRunId,
-      step_name: "profile_loaded",
-      step_order: 2,
-      details: "Candidate profile and preferences loaded for external matching.",
-      metadata: {
-        preferred_role: candidate.preferred_role,
-        preferred_location: candidate.preferred_location,
-        experience_years: candidate.experience_years,
-      },
-    });
-
-    await addAgentRunStep({
-      agent_run_id: agentRunId,
-      step_name: "match_score_calculated",
-      step_order: 3,
-      details: `External job match score calculated as ${match.match_score}%.`,
-      metadata: {
-        match_score: match.match_score,
-        matched_skills: match.matched_skills,
-        missing_skills: match.missing_skills,
+        worker_enabled: isWorkerEnabled(),
       },
     });
 
@@ -586,6 +778,7 @@ const applyExternalJob = async (req, res) => {
           matched_skills: match.matched_skills,
           missing_skills: match.missing_skills,
           apply_mode: job.apply_mode,
+          agent_run_id: agentRunId,
         },
       });
 
@@ -593,7 +786,7 @@ const applyExternalJob = async (req, res) => {
         agent_run_id: agentRunId,
         step_name: "skipped_low_match",
         step_status: "skipped",
-        step_order: 4,
+        step_order: 1,
         details: "Agent skipped this external job because match score was below threshold.",
       });
 
@@ -636,6 +829,7 @@ const applyExternalJob = async (req, res) => {
           existing_status: existing.rows[0].application_status,
           match_score: match.match_score,
           apply_mode: job.apply_mode,
+          agent_run_id: agentRunId,
         },
       });
 
@@ -643,7 +837,7 @@ const applyExternalJob = async (req, res) => {
         agent_run_id: agentRunId,
         step_name: "duplicate_application_detected",
         step_status: "skipped",
-        step_order: 4,
+        step_order: 1,
         details: "Agent found an existing external application and did not create a duplicate.",
         metadata: {
           existing_status: existing.rows[0].application_status,
@@ -670,87 +864,57 @@ const applyExternalJob = async (req, res) => {
       });
     }
 
-    const canAutoComplete = job.apply_mode === "easy_apply" && match.match_score >= 60;
-    const applicationStatus = canAutoComplete ? "Applied" : "Pending";
-    const failureReason = canAutoComplete
-      ? null
-      : "Manual action needed: external portal may require questions, login, CAPTCHA, or candidate review.";
-
-    await addAgentRunStep({
-      agent_run_id: agentRunId,
-      step_name: "external_portal_assessed",
-      step_order: 4,
-      details: canAutoComplete
-        ? "External source is safe for simulated auto-apply."
-        : "External source requires candidate review or manual completion.",
-      metadata: {
-        apply_mode: job.apply_mode,
-        can_auto_complete: canAutoComplete,
-      },
+    const workerResult = await callPythonWorker({
+      agentRunId,
+      candidate,
+      job,
+      match,
+      userId: req.user.user_id,
     });
 
-    const application = await pool.query(
-      `INSERT INTO external_applications (
-        candidate_id,
-        external_job_id,
-        application_status,
-        failure_reason
-       )
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [candidate.candidate_id, external_job_id, applicationStatus, failureReason]
-    );
+    if (workerResult) {
+      if (workerResult.outcome === "skipped_low_match") {
+        return res.status(400).json({
+          error: workerResult.message,
+          agent_run_id: agentRunId,
+        });
+      }
 
-    await addAgentRunStep({
-      agent_run_id: agentRunId,
-      step_name: "application_record_created",
-      step_order: 5,
-      details: `External application record created with status ${applicationStatus}.`,
-      metadata: {
-        external_application_id: application.rows[0].external_application_id,
-        application_status: applicationStatus,
-      },
-    });
+      if (workerResult.outcome === "skipped_duplicate") {
+        return res.status(409).json({
+          error: workerResult.message,
+          external_application_id: workerResult.external_application_id,
+          application_status: workerResult.application_status,
+          agent_run_id: agentRunId,
+        });
+      }
 
-    await logAgentAttempt({
-      candidate_id: candidate.candidate_id,
-      external_job_id,
-      external_application_id: application.rows[0].external_application_id,
-      action_type: "external_apply_attempt",
-      attempt_status: canAutoComplete ? "auto_applied" : "pending_manual_action",
-      source_platform: job.source_platform,
-      failure_reason: failureReason,
-      metadata: {
-        match_score: match.match_score,
-        matched_skills: match.matched_skills,
-        missing_skills: match.missing_skills,
-        apply_mode: job.apply_mode,
+      return res.status(200).json({
+        message: workerResult.message,
+        externalApplication: {
+          ...(workerResult.externalApplication || {}),
+          job_title: job.job_title,
+          company_name: job.company_name,
+          source_platform: job.source_platform,
+          job_url: job.job_url,
+          match_score: match.match_score,
+        },
         agent_run_id: agentRunId,
-      },
-    });
+        used_worker: true,
+      });
+    }
 
-    await finishAgentRun({
-      agent_run_id: agentRunId,
-      run_status: canAutoComplete ? "completed" : "needs_manual_action",
-      current_step: canAutoComplete ? "completed" : "waiting_for_candidate",
-      summary: canAutoComplete
-        ? "External application submitted through simulated easy apply."
-        : "External application needs manual completion by candidate.",
-      external_application_id: application.rows[0].external_application_id,
-      metadata: {
-        match_score: match.match_score,
-        matched_skills: match.matched_skills,
-        missing_skills: match.missing_skills,
-        apply_mode: job.apply_mode,
-      },
+    const localResult = await processExternalApplyLocally({
+      agentRunId,
+      candidate,
+      job,
+      match,
     });
 
     return res.status(200).json({
-      message: canAutoComplete
-        ? "External application submitted"
-        : "External application needs manual completion",
+      message: localResult.message,
       externalApplication: {
-        ...application.rows[0],
+        ...localResult.externalApplication,
         job_title: job.job_title,
         company_name: job.company_name,
         source_platform: job.source_platform,
@@ -758,6 +922,7 @@ const applyExternalJob = async (req, res) => {
         match_score: match.match_score,
       },
       agent_run_id: agentRunId,
+      used_worker: false,
     });
   } catch (error) {
     console.log(error);
@@ -951,6 +1116,7 @@ module.exports = {
   getMyExternalApplications,
   getExternalAgentLogs,
   getExternalAgentRuns,
+  getExternalWorkerHealth,
   applyExternalJob,
   completeExternalApplication,
 };
