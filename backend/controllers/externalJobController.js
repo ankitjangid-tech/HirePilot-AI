@@ -38,7 +38,9 @@ const calculateExternalMatch = (candidate, job) => {
   if (
     candidate.preferred_role &&
     job.job_title &&
-    job.job_title.toLowerCase().includes(candidate.preferred_role.toLowerCase().split(" ")[0])
+    job.job_title
+      .toLowerCase()
+      .includes(candidate.preferred_role.toLowerCase().split(" ")[0])
   ) {
     score += 10;
   }
@@ -86,6 +88,47 @@ const isProfileIncomplete = (candidate) => {
     !candidate.preferred_location ||
     !candidate.expected_salary
   );
+};
+
+const logAgentAttempt = async ({
+  candidate_id,
+  external_job_id = null,
+  external_application_id = null,
+  action_type,
+  attempt_status,
+  source_platform = null,
+  failure_reason = null,
+  metadata = {},
+}) => {
+  try {
+    await pool.query(
+      `INSERT INTO agent_attempt_logs (
+        candidate_id,
+        external_job_id,
+        external_application_id,
+        agent_name,
+        action_type,
+        attempt_status,
+        source_platform,
+        failure_reason,
+        metadata
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+      [
+        candidate_id,
+        external_job_id,
+        external_application_id,
+        "external_apply_agent",
+        action_type,
+        attempt_status,
+        source_platform,
+        failure_reason,
+        JSON.stringify(metadata || {}),
+      ]
+    );
+  } catch (error) {
+    console.log("AGENT LOG ERROR:", error.message);
+  }
 };
 
 const getMatchedExternalJobs = async (req, res) => {
@@ -200,6 +243,52 @@ const getMyExternalApplications = async (req, res) => {
   }
 };
 
+const getExternalAgentLogs = async (req, res) => {
+  try {
+    const candidate = await getCandidateForUser(req.user.user_id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT
+        aal.agent_attempt_id,
+        aal.candidate_id,
+        aal.external_job_id,
+        aal.external_application_id,
+        aal.agent_name,
+        aal.action_type,
+        aal.attempt_status,
+        aal.source_platform,
+        aal.failure_reason,
+        aal.metadata,
+        aal.created_at,
+        ej.job_title,
+        ej.company_name
+       FROM agent_attempt_logs aal
+       LEFT JOIN external_jobs ej
+       ON ej.external_job_id = aal.external_job_id
+       WHERE aal.candidate_id = $1
+       ORDER BY aal.created_at DESC, aal.agent_attempt_id DESC
+       LIMIT 25`,
+      [candidate.candidate_id]
+    );
+
+    return res.status(200).json({
+      agentLogs: result.rows,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      error: "Unable to fetch external agent activity",
+    });
+  }
+};
+
 const applyExternalJob = async (req, res) => {
   try {
     const { external_job_id } = req.body;
@@ -242,6 +331,21 @@ const applyExternalJob = async (req, res) => {
     const match = calculateExternalMatch(candidate, job);
 
     if (match.match_score < 40) {
+      await logAgentAttempt({
+        candidate_id: candidate.candidate_id,
+        external_job_id,
+        action_type: "external_apply_attempt",
+        attempt_status: "skipped_low_match",
+        source_platform: job.source_platform,
+        failure_reason: "External job match score is too low for auto apply",
+        metadata: {
+          match_score: match.match_score,
+          matched_skills: match.matched_skills,
+          missing_skills: match.missing_skills,
+          apply_mode: job.apply_mode,
+        },
+      });
+
       return res.status(400).json({
         error: "External job match score is too low for auto apply",
       });
@@ -258,6 +362,21 @@ const applyExternalJob = async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
+      await logAgentAttempt({
+        candidate_id: candidate.candidate_id,
+        external_job_id,
+        external_application_id: existing.rows[0].external_application_id,
+        action_type: "external_apply_attempt",
+        attempt_status: "skipped_duplicate",
+        source_platform: job.source_platform,
+        failure_reason: "External application already exists",
+        metadata: {
+          existing_status: existing.rows[0].application_status,
+          match_score: match.match_score,
+          apply_mode: job.apply_mode,
+        },
+      });
+
       return res.status(409).json({
         error: "External application already exists",
         external_application_id: existing.rows[0].external_application_id,
@@ -269,7 +388,7 @@ const applyExternalJob = async (req, res) => {
     const applicationStatus = canAutoComplete ? "Applied" : "Pending";
     const failureReason = canAutoComplete
       ? null
-      : "External portal requires manual questions, login, CAPTCHA, or candidate review";
+      : "Manual action needed: external portal may require questions, login, CAPTCHA, or candidate review.";
 
     const application = await pool.query(
       `INSERT INTO external_applications (
@@ -283,10 +402,26 @@ const applyExternalJob = async (req, res) => {
       [candidate.candidate_id, external_job_id, applicationStatus, failureReason]
     );
 
+    await logAgentAttempt({
+      candidate_id: candidate.candidate_id,
+      external_job_id,
+      external_application_id: application.rows[0].external_application_id,
+      action_type: "external_apply_attempt",
+      attempt_status: canAutoComplete ? "auto_applied" : "pending_manual_action",
+      source_platform: job.source_platform,
+      failure_reason: failureReason,
+      metadata: {
+        match_score: match.match_score,
+        matched_skills: match.matched_skills,
+        missing_skills: match.missing_skills,
+        apply_mode: job.apply_mode,
+      },
+    });
+
     return res.status(200).json({
       message: canAutoComplete
         ? "External application submitted"
-        : "External application moved to manual pending",
+        : "External application needs manual completion",
       externalApplication: {
         ...application.rows[0],
         job_title: job.job_title,
@@ -341,8 +476,38 @@ const completeExternalApplication = async (req, res) => {
       });
     }
 
+    const jobResult = await pool.query(
+      `SELECT
+        external_job_id,
+        job_title,
+        company_name,
+        source_platform,
+        apply_mode
+       FROM external_jobs
+       WHERE external_job_id = $1`,
+      [result.rows[0].external_job_id]
+    );
+
+    const job = jobResult.rows[0] || {};
+
+    await logAgentAttempt({
+      candidate_id: candidate.candidate_id,
+      external_job_id: result.rows[0].external_job_id,
+      external_application_id: result.rows[0].external_application_id,
+      action_type: "manual_completion_confirmation",
+      attempt_status: "manual_completed",
+      source_platform: job.source_platform,
+      failure_reason: null,
+      metadata: {
+        candidate_confirmed_manual_completion: true,
+        job_title: job.job_title,
+        company_name: job.company_name,
+        apply_mode: job.apply_mode,
+      },
+    });
+
     return res.status(200).json({
-      message: "External application completed",
+      message: "Marked as completed after manual submission",
       externalApplication: result.rows[0],
     });
   } catch (error) {
@@ -357,6 +522,7 @@ const completeExternalApplication = async (req, res) => {
 module.exports = {
   getMatchedExternalJobs,
   getMyExternalApplications,
+  getExternalAgentLogs,
   applyExternalJob,
   completeExternalApplication,
 };

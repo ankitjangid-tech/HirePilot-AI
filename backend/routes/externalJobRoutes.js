@@ -8,6 +8,7 @@ const { authorizeRole } = require("../middleware/roleMiddleware");
 const {
   getMatchedExternalJobs,
   getMyExternalApplications,
+  getExternalAgentLogs,
   applyExternalJob,
   completeExternalApplication,
 } = require("../controllers/externalJobController");
@@ -24,6 +25,13 @@ router.get(
   verifyToken,
   authorizeRole("candidate"),
   getMyExternalApplications
+);
+
+router.get(
+  "/agent-logs",
+  verifyToken,
+  authorizeRole("candidate"),
+  getExternalAgentLogs
 );
 
 router.post(

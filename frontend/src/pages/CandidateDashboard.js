@@ -23,6 +23,7 @@ import {
 import {
   getMatchedExternalJobs,
   getExternalApplications,
+  getExternalAgentLogs,
   applyExternalJob,
   completeExternalApplication,
 } from "../services/externalJobService";
@@ -63,6 +64,20 @@ const notificationLabels = {
   interview_rescheduled: "Rescheduled",
   interview_cancelled: "Cancelled",
   general: "Update",
+};
+
+const agentStatusLabels = {
+  auto_applied: "Auto Applied",
+  pending_manual_action: "Manual Action",
+  manual_completed: "Manually Completed",
+  skipped_duplicate: "Skipped Duplicate",
+  skipped_low_match: "Skipped Low Match",
+  failed: "Failed",
+};
+
+const actionTypeLabels = {
+  external_apply_attempt: "External apply attempt",
+  manual_completion_confirmation: "Candidate manual completion",
 };
 
 const openPdfBlob = (blob) => {
@@ -137,6 +152,7 @@ function CandidateDashboard() {
   const [jobs, setJobs] = useState([]);
   const [externalJobs, setExternalJobs] = useState([]);
   const [externalApplications, setExternalApplications] = useState([]);
+  const [externalAgentLogs, setExternalAgentLogs] = useState([]);
   const [applications, setApplications] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -182,6 +198,17 @@ function CandidateDashboard() {
       setExternalApplications(
         externalApplicationsResponse.data.externalApplications || []
       );
+
+      try {
+        const externalAgentLogsResponse = await getExternalAgentLogs(token);
+        setExternalAgentLogs(externalAgentLogsResponse.data.agentLogs || []);
+      } catch (agentLogError) {
+        console.log(
+          "EXTERNAL AGENT LOG FETCH ERROR:",
+          agentLogError.response?.data || agentLogError.message
+        );
+        setExternalAgentLogs([]);
+      }
 
       const applicationsResponse = await getApplications(token);
       setApplications(
@@ -405,7 +432,7 @@ function CandidateDashboard() {
       }
 
       setCompletingExternalApplicationId(externalApplicationId);
-      setExternalMessage("Completing external application...");
+      setExternalMessage("Marking manual completion...");
 
       const response = await completeExternalApplication(token, externalApplicationId);
 
@@ -1078,6 +1105,10 @@ function CandidateDashboard() {
           <div>
             <p className="eyebrow">External Applications</p>
             <h2>External Apply Tracker</h2>
+            <p className="muted">
+              For manual-pending jobs, open the source page first. After you
+              finish the external form, mark it completed here.
+            </p>
           </div>
           <span className="count-pill">{externalApplications.length}</span>
         </div>
@@ -1099,6 +1130,12 @@ function CandidateDashboard() {
                   {application.failure_reason && (
                     <p className="helper-text compact-muted">
                       {application.failure_reason}
+                    </p>
+                  )}
+                  {application.application_status === "Pending" && (
+                    <p className="helper-text manual-action-note">
+                      Open Source, complete the external application manually,
+                      then click “I completed this manually”.
                     </p>
                   )}
                 </div>
@@ -1123,8 +1160,8 @@ function CandidateDashboard() {
                     >
                       {completingExternalApplicationId ===
                       application.external_application_id
-                        ? "Completing..."
-                        : "Complete External Application"}
+                        ? "Marking completed..."
+                        : "I completed this manually"}
                     </button>
                   )}
 
@@ -1136,6 +1173,54 @@ function CandidateDashboard() {
                   >
                     Open Source
                   </a>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="panel agent-activity-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">AI Agent Foundation</p>
+            <h2>External Agent Activity</h2>
+            <p className="muted">
+              Phase 1 logs every external apply attempt, manual fallback, and
+              candidate confirmation. Future LangGraph/Playwright agents will
+              write richer automation events here.
+            </p>
+          </div>
+          <span className="count-pill">{externalAgentLogs.length}</span>
+        </div>
+
+        {externalAgentLogs.length === 0 ? (
+          <p className="empty-state">No external agent activity yet.</p>
+        ) : (
+          <div className="agent-log-list">
+            {externalAgentLogs.map((log) => (
+              <article className="agent-log-card" key={log.agent_attempt_id}>
+                <div>
+                  <span className={statusClass(log.attempt_status)}>
+                    {agentStatusLabels[log.attempt_status] || log.attempt_status}
+                  </span>
+                  <h3>{log.job_title || "External job"}</h3>
+                  <p>
+                    {actionTypeLabels[log.action_type] || log.action_type} • {" "}
+                    {log.company_name || "External company"}
+                    {log.source_platform ? ` • ${log.source_platform}` : ""}
+                  </p>
+                  {log.failure_reason && (
+                    <p className="helper-text compact-muted">
+                      {log.failure_reason}
+                    </p>
+                  )}
+                </div>
+                <div className="agent-log-meta">
+                  {log.metadata?.match_score !== undefined && (
+                    <span>Match: {log.metadata.match_score}%</span>
+                  )}
+                  <span>{new Date(log.created_at).toLocaleString()}</span>
                 </div>
               </article>
             ))}
