@@ -1176,3 +1176,109 @@ button:disabled {
     text-align: left;
   }
 }
+
+/* AI Agent Orchestration Foundation */
+.orchestration-panel .section-heading {
+  margin-bottom: 16px;
+}
+
+.agent-run-list {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-run-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.agent-run-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.agent-run-header h3 {
+  margin: 8px 0 4px;
+}
+
+.agent-run-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.agent-run-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 160px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.agent-step-timeline {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.agent-step strong {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.agent-step p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.status-needs-manual-action,
+.status-running,
+.status-skipped {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.status-completed,
+.status-candidate-approved {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-failed {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+@media (max-width: 700px) {
+  .agent-run-header {
+    flex-direction: column;
+  }
+
+  .agent-run-meta {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .agent-step {
+    grid-template-columns: 1fr;
+  }
+}

@@ -22,6 +22,10 @@ export const getExternalAgentLogs = (token) => {
   return API.get("/external-jobs/agent-logs", authHeader(token));
 };
 
+export const getExternalAgentRuns = (token) => {
+  return API.get("/external-jobs/agent-runs", authHeader(token));
+};
+
 export const applyExternalJob = (token, externalJobId) => {
   return API.post(
     "/external-jobs/apply",

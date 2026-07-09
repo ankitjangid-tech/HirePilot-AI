@@ -24,6 +24,7 @@ import {
   getMatchedExternalJobs,
   getExternalApplications,
   getExternalAgentLogs,
+  getExternalAgentRuns,
   applyExternalJob,
   completeExternalApplication,
 } from "../services/externalJobService";
@@ -73,6 +74,34 @@ const agentStatusLabels = {
   skipped_duplicate: "Skipped Duplicate",
   skipped_low_match: "Skipped Low Match",
   failed: "Failed",
+};
+
+const agentRunStatusLabels = {
+  queued: "Queued",
+  running: "Running",
+  completed: "Completed",
+  needs_manual_action: "Needs Manual Action",
+  skipped: "Skipped",
+  failed: "Failed",
+};
+
+const agentRunTypeLabels = {
+  external_apply: "External Apply",
+  manual_completion_confirmation: "Manual Completion",
+};
+
+const agentStepLabels = {
+  candidate_approval_received: "Candidate approval received",
+  profile_loaded: "Profile loaded",
+  match_score_calculated: "Match score calculated",
+  external_portal_assessed: "External portal assessed",
+  application_record_created: "Application record created",
+  waiting_for_candidate: "Waiting for candidate",
+  duplicate_application_detected: "Duplicate detected",
+  skipped_low_match: "Skipped: low match",
+  candidate_confirmation_received: "Candidate confirmation received",
+  external_status_updated: "External status updated",
+  completion_skipped: "Completion skipped",
 };
 
 const actionTypeLabels = {
@@ -153,6 +182,7 @@ function CandidateDashboard() {
   const [externalJobs, setExternalJobs] = useState([]);
   const [externalApplications, setExternalApplications] = useState([]);
   const [externalAgentLogs, setExternalAgentLogs] = useState([]);
+  const [externalAgentRuns, setExternalAgentRuns] = useState([]);
   const [applications, setApplications] = useState([]);
   const [pendingApplications, setPendingApplications] = useState([]);
   const [notifications, setNotifications] = useState([]);
@@ -208,6 +238,17 @@ function CandidateDashboard() {
           agentLogError.response?.data || agentLogError.message
         );
         setExternalAgentLogs([]);
+      }
+
+      try {
+        const externalAgentRunsResponse = await getExternalAgentRuns(token);
+        setExternalAgentRuns(externalAgentRunsResponse.data.agentRuns || []);
+      } catch (agentRunError) {
+        console.log(
+          "EXTERNAL AGENT RUN FETCH ERROR:",
+          agentRunError.response?.data || agentRunError.message
+        );
+        setExternalAgentRuns([]);
       }
 
       const applicationsResponse = await getApplications(token);
@@ -1173,6 +1214,73 @@ function CandidateDashboard() {
                   >
                     Open Source
                   </a>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+
+      <section className="panel orchestration-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">AI Agent Orchestration</p>
+            <h2>Agent Run Timeline</h2>
+            <p className="muted">
+              Each external apply action now creates an agent run with clear
+              steps. Future LangGraph and Playwright workers will update these
+              runs while real browser automation is executing.
+            </p>
+          </div>
+          <span className="count-pill">{externalAgentRuns.length}</span>
+        </div>
+
+        {externalAgentRuns.length === 0 ? (
+          <p className="empty-state">No AI agent runs yet.</p>
+        ) : (
+          <div className="agent-run-list">
+            {externalAgentRuns.map((run) => (
+              <article className="agent-run-card" key={run.agent_run_id}>
+                <div className="agent-run-header">
+                  <div>
+                    <span className={statusClass(run.run_status)}>
+                      {agentRunStatusLabels[run.run_status] || run.run_status}
+                    </span>
+                    <h3>{run.job_title || "External job"}</h3>
+                    <p>
+                      {agentRunTypeLabels[run.run_type] || run.run_type} • {" "}
+                      {run.company_name || "External company"}
+                      {run.source_platform ? ` • ${run.source_platform}` : ""}
+                    </p>
+                  </div>
+                  <div className="agent-run-meta">
+                    {run.metadata?.match_score !== undefined && (
+                      <span>Match: {run.metadata.match_score}%</span>
+                    )}
+                    <span>{new Date(run.created_at).toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {run.summary && <p className="helper-text">{run.summary}</p>}
+                {run.error_message && (
+                  <p className="helper-text error-text">{run.error_message}</p>
+                )}
+
+                <div className="agent-step-timeline">
+                  {(run.steps || []).map((step) => (
+                    <div className="agent-step" key={step.step_id}>
+                      <span className={statusClass(step.step_status)}>
+                        {step.step_status}
+                      </span>
+                      <div>
+                        <strong>
+                          {agentStepLabels[step.step_name] || step.step_name}
+                        </strong>
+                        {step.details && <p>{step.details}</p>}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </article>
             ))}

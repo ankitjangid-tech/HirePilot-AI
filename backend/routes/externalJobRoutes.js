@@ -9,6 +9,7 @@ const {
   getMatchedExternalJobs,
   getMyExternalApplications,
   getExternalAgentLogs,
+  getExternalAgentRuns,
   applyExternalJob,
   completeExternalApplication,
 } = require("../controllers/externalJobController");
@@ -32,6 +33,13 @@ router.get(
   verifyToken,
   authorizeRole("candidate"),
   getExternalAgentLogs
+);
+
+router.get(
+  "/agent-runs",
+  verifyToken,
+  authorizeRole("candidate"),
+  getExternalAgentRuns
 );
 
 router.post(
