@@ -185,6 +185,8 @@ class ExternalApplyPayload(BaseModel):
     preferred_role: Optional[str] = None
     preferred_location: Optional[str] = None
     experience_years: Optional[int] = None
+    force_retry: bool = False
+    retry_source_agent_run_id: Optional[int] = None
 
 
 @app.get("/health")
@@ -332,62 +334,89 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                 )
                 existing = cursor.fetchone()
 
+                retry_existing_application = None
+
                 if existing:
-                    add_step(
-                        cursor,
-                        payload.agent_run_id,
-                        "duplicate_application_detected",
-                        5,
-                        "Worker found an existing external application and did not create a duplicate.",
-                        step_status="skipped",
-                        metadata={
+                    retryable_statuses = {"Pending", "Cancelled", "Failed"}
+                    can_retry_existing = (
+                        payload.force_retry
+                        and existing["application_status"] in retryable_statuses
+                    )
+
+                    if can_retry_existing:
+                        retry_existing_application = existing
+
+                        add_step(
+                            cursor,
+                            payload.agent_run_id,
+                            "retry_existing_application",
+                            5,
+                            "Worker will retry this non-final external application record.",
+                            metadata={
+                                "external_application_id": existing["external_application_id"],
+                                "previous_status": existing["application_status"],
+                                "retry_source_agent_run_id": payload.retry_source_agent_run_id,
+                            },
+                        )
+                    else:
+                        add_step(
+                            cursor,
+                            payload.agent_run_id,
+                            "duplicate_application_detected",
+                            5,
+                            "Worker found an existing external application and did not create a duplicate.",
+                            step_status="skipped",
+                            metadata={
+                                "external_application_id": existing["external_application_id"],
+                                "existing_status": existing["application_status"],
+                            },
+                        )
+
+                        log_attempt(
+                            cursor,
+                            payload.candidate_id,
+                            payload.external_job_id,
+                            existing["external_application_id"],
+                            "external_apply_retry" if payload.force_retry else "external_apply_attempt",
+                            "skipped_duplicate",
+                            payload.source_platform,
+                            "External application already exists",
+                            {
+                                "existing_status": existing["application_status"],
+                                "match_score": payload.match_score,
+                                "apply_mode": payload.apply_mode,
+                                "worker_name": WORKER_NAME,
+                                "agent_run_id": payload.agent_run_id,
+                                "force_retry": payload.force_retry,
+                                "retry_source_agent_run_id": payload.retry_source_agent_run_id,
+                            },
+                        )
+
+                        update_run(
+                            cursor,
+                            payload.agent_run_id,
+                            run_status="skipped",
+                            current_step="duplicate_application_detected",
+                            summary="Python worker skipped external apply because application already exists.",
+                            external_application_id=existing["external_application_id"],
+                            metadata={
+                                "existing_status": existing["application_status"],
+                                "match_score": payload.match_score,
+                                "worker_name": WORKER_NAME,
+                                "force_retry": payload.force_retry,
+                            },
+                            completed=True,
+                        )
+
+                        conn.commit()
+                        return {
+                            "message": "External application already exists",
+                            "outcome": "skipped_duplicate",
+                            "run_status": "skipped",
                             "external_application_id": existing["external_application_id"],
-                            "existing_status": existing["application_status"],
-                        },
-                    )
-
-                    log_attempt(
-                        cursor,
-                        payload.candidate_id,
-                        payload.external_job_id,
-                        existing["external_application_id"],
-                        "external_apply_attempt",
-                        "skipped_duplicate",
-                        payload.source_platform,
-                        "External application already exists",
-                        {
-                            "existing_status": existing["application_status"],
-                            "match_score": payload.match_score,
-                            "apply_mode": payload.apply_mode,
-                            "worker_name": WORKER_NAME,
-                            "agent_run_id": payload.agent_run_id,
-                        },
-                    )
-
-                    update_run(
-                        cursor,
-                        payload.agent_run_id,
-                        run_status="skipped",
-                        current_step="duplicate_application_detected",
-                        summary="Python worker skipped external apply because application already exists.",
-                        external_application_id=existing["external_application_id"],
-                        metadata={
-                            "existing_status": existing["application_status"],
-                            "match_score": payload.match_score,
-                            "worker_name": WORKER_NAME,
-                        },
-                        completed=True,
-                    )
-
-                    conn.commit()
-                    return {
-                        "message": "External application already exists",
-                        "outcome": "skipped_duplicate",
-                        "run_status": "skipped",
-                        "external_application_id": existing["external_application_id"],
-                        "application_status": existing["application_status"],
-                        "used_worker": True,
-                    }
+                            "application_status": existing["application_status"],
+                            "used_worker": True,
+                        }
 
                 can_auto_complete = payload.apply_mode == "easy_apply" and payload.match_score >= 60
                 application_status = "Applied" if can_auto_complete else "Pending"
@@ -408,24 +437,44 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     },
                 )
 
-                cursor.execute(
-                    """
-                    INSERT INTO external_applications (
-                      candidate_id,
-                      external_job_id,
-                      application_status,
-                      failure_reason
+                if retry_existing_application:
+                    cursor.execute(
+                        """
+                        UPDATE external_applications
+                        SET application_status = %s,
+                            failure_reason = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE external_application_id = %s
+                        AND candidate_id = %s
+                        RETURNING *
+                        """,
+                        (
+                            application_status,
+                            failure_reason,
+                            retry_existing_application["external_application_id"],
+                            payload.candidate_id,
+                        ),
                     )
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING *
-                    """,
-                    (
-                        payload.candidate_id,
-                        payload.external_job_id,
-                        application_status,
-                        failure_reason,
-                    ),
-                )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT INTO external_applications (
+                          candidate_id,
+                          external_job_id,
+                          application_status,
+                          failure_reason
+                        )
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING *
+                        """,
+                        (
+                            payload.candidate_id,
+                            payload.external_job_id,
+                            application_status,
+                            failure_reason,
+                        ),
+                    )
+
                 application = cursor.fetchone()
 
                 add_step(
@@ -455,7 +504,7 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     payload.candidate_id,
                     payload.external_job_id,
                     application["external_application_id"],
-                    "external_apply_attempt",
+                    "external_apply_retry" if payload.force_retry else "external_apply_attempt",
                     "auto_applied" if can_auto_complete else "pending_manual_action",
                     payload.source_platform,
                     failure_reason,
@@ -490,6 +539,8 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                         "apply_mode": payload.apply_mode,
                         "worker_name": WORKER_NAME,
                         "used_python_worker": True,
+                        "force_retry": payload.force_retry,
+                        "retry_source_agent_run_id": payload.retry_source_agent_run_id,
                     },
                     completed=True,
                 )

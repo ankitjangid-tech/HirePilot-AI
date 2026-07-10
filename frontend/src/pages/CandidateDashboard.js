@@ -27,6 +27,8 @@ import {
   getExternalAgentRuns,
   getExternalWorkerHealth,
   applyExternalJob,
+  retryExternalAgentRun,
+  cancelExternalAgentRun,
   completeExternalApplication,
 } from "../services/externalJobService";
 
@@ -75,6 +77,7 @@ const agentStatusLabels = {
   skipped_duplicate: "Skipped Duplicate",
   skipped_low_match: "Skipped Low Match",
   failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 const agentRunStatusLabels = {
@@ -84,10 +87,12 @@ const agentRunStatusLabels = {
   needs_manual_action: "Needs Manual Action",
   skipped: "Skipped",
   failed: "Failed",
+  cancelled: "Cancelled",
 };
 
 const agentRunTypeLabels = {
   external_apply: "External Apply",
+  external_apply_retry: "External Apply Retry",
   manual_completion_confirmation: "Manual Completion",
 };
 
@@ -104,6 +109,9 @@ const agentStepLabels = {
   worker_simulated_submit: "Worker simulated submit",
   worker_unavailable_fallback: "Worker fallback used",
   worker_failed: "Worker failed",
+  retry_existing_application: "Retry existing application",
+  candidate_cancelled_run: "Candidate cancelled run",
+  external_application_cancelled: "External application cancelled",
   candidate_confirmation_received: "Candidate confirmation received",
   external_status_updated: "External status updated",
   completion_skipped: "Completion skipped",
@@ -111,7 +119,9 @@ const agentStepLabels = {
 
 const actionTypeLabels = {
   external_apply_attempt: "External apply attempt",
+  external_apply_retry: "External apply retry",
   manual_completion_confirmation: "Candidate manual completion",
+  agent_run_cancelled: "Agent run cancelled",
 };
 
 const openPdfBlob = (blob) => {
@@ -176,6 +186,14 @@ const notificationClass = (type) =>
 
 const displayValue = (value) => value || "Not added";
 
+const canRetryAgentRun = (run) =>
+  ["failed", "needs_manual_action", "skipped", "cancelled"].includes(
+    run?.run_status
+  );
+
+const canCancelAgentRun = (run) =>
+  ["queued", "running", "needs_manual_action"].includes(run?.run_status);
+
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -205,6 +223,7 @@ function CandidateDashboard() {
   const [completingApplicationId, setCompletingApplicationId] = useState(null);
   const [externalApplyingId, setExternalApplyingId] = useState(null);
   const [completingExternalApplicationId, setCompletingExternalApplicationId] = useState(null);
+  const [agentRunActionId, setAgentRunActionId] = useState(null);
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   const fetchDashboardData = async () => {
@@ -507,6 +526,54 @@ function CandidateDashboard() {
       );
     } finally {
       setCompletingExternalApplicationId(null);
+    }
+  };
+
+  const handleRetryAgentRun = async (agentRunId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setAgentRunActionId(agentRunId);
+      setExternalMessage("Retrying AI agent run...");
+
+      const response = await retryExternalAgentRun(token, agentRunId);
+
+      setExternalMessage(response.data.message || "Agent run retry completed");
+      await fetchDashboardData();
+    } catch (error) {
+      console.log("RETRY AGENT RUN ERROR:", error.response?.data || error.message);
+      setExternalMessage(error.response?.data?.error || "Unable to retry agent run");
+    } finally {
+      setAgentRunActionId(null);
+    }
+  };
+
+  const handleCancelAgentRun = async (agentRunId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setAgentRunActionId(agentRunId);
+      setExternalMessage("Cancelling AI agent run...");
+
+      const response = await cancelExternalAgentRun(token, agentRunId);
+
+      setExternalMessage(response.data.message || "Agent run cancelled");
+      await fetchDashboardData();
+    } catch (error) {
+      console.log("CANCEL AGENT RUN ERROR:", error.response?.data || error.message);
+      setExternalMessage(error.response?.data?.error || "Unable to cancel agent run");
+    } finally {
+      setAgentRunActionId(null);
     }
   };
 
@@ -1318,6 +1385,34 @@ function CandidateDashboard() {
                     </div>
                   ))}
                 </div>
+
+                {(canRetryAgentRun(run) || canCancelAgentRun(run)) && (
+                  <div className="agent-run-controls">
+                    {canRetryAgentRun(run) && (
+                      <button
+                        className="secondary-button small-button"
+                        onClick={() => handleRetryAgentRun(run.agent_run_id)}
+                        disabled={agentRunActionId === run.agent_run_id}
+                      >
+                        {agentRunActionId === run.agent_run_id
+                          ? "Working..."
+                          : "Retry Run"}
+                      </button>
+                    )}
+
+                    {canCancelAgentRun(run) && (
+                      <button
+                        className="danger-button small-button"
+                        onClick={() => handleCancelAgentRun(run.agent_run_id)}
+                        disabled={agentRunActionId === run.agent_run_id}
+                      >
+                        {agentRunActionId === run.agent_run_id
+                          ? "Working..."
+                          : "Cancel Run"}
+                      </button>
+                    )}
+                  </div>
+                )}
               </article>
             ))}
           </div>

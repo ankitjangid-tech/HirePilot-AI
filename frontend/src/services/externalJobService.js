@@ -49,3 +49,19 @@ export const completeExternalApplication = (token, externalApplicationId) => {
 export const getExternalWorkerHealth = (token) => {
   return API.get("/external-jobs/worker-health", authHeader(token));
 };
+
+export const retryExternalAgentRun = (token, agentRunId) => {
+  return API.post(
+    `/external-jobs/agent-runs/${agentRunId}/retry`,
+    {},
+    authHeader(token)
+  );
+};
+
+export const cancelExternalAgentRun = (token, agentRunId) => {
+  return API.put(
+    `/external-jobs/agent-runs/${agentRunId}/cancel`,
+    {},
+    authHeader(token)
+  );
+};

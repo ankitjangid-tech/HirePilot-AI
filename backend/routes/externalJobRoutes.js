@@ -12,6 +12,8 @@ const {
   getExternalAgentRuns,
   getExternalWorkerHealth,
   applyExternalJob,
+  retryExternalAgentRun,
+  cancelExternalAgentRun,
   completeExternalApplication,
 } = require("../controllers/externalJobController");
 
@@ -55,6 +57,20 @@ router.post(
   verifyToken,
   authorizeRole("candidate"),
   applyExternalJob
+);
+
+router.post(
+  "/agent-runs/:agentRunId/retry",
+  verifyToken,
+  authorizeRole("candidate"),
+  retryExternalAgentRun
+);
+
+router.put(
+  "/agent-runs/:agentRunId/cancel",
+  verifyToken,
+  authorizeRole("candidate"),
+  cancelExternalAgentRun
 );
 
 router.put(

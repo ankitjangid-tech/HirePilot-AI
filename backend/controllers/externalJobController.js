@@ -97,6 +97,15 @@ const workerBaseUrl = () =>
 const isWorkerEnabled = () =>
   String(process.env.AI_WORKER_ENABLED || "false").toLowerCase() === "true";
 
+const RETRYABLE_APPLICATION_STATUSES = ["Pending", "Cancelled", "Failed"];
+const ACTIVE_AGENT_RUN_STATUSES = ["queued", "running", "needs_manual_action"];
+const RETRYABLE_AGENT_RUN_STATUSES = [
+  "failed",
+  "needs_manual_action",
+  "skipped",
+  "cancelled",
+];
+
 const logAgentAttempt = async ({
   candidate_id,
   external_job_id = null,
@@ -267,7 +276,15 @@ const finishAgentRun = async ({
   }
 };
 
-const callPythonWorker = async ({ agentRunId, candidate, job, match, userId }) => {
+const callPythonWorker = async ({
+  agentRunId,
+  candidate,
+  job,
+  match,
+  userId,
+  forceRetry = false,
+  retrySourceAgentRunId = null,
+}) => {
   if (!isWorkerEnabled()) {
     return null;
   }
@@ -291,6 +308,8 @@ const callPythonWorker = async ({ agentRunId, candidate, job, match, userId }) =
         preferred_role: candidate.preferred_role,
         preferred_location: candidate.preferred_location,
         experience_years: candidate.experience_years,
+        force_retry: forceRetry,
+        retry_source_agent_run_id: retrySourceAgentRunId,
       },
       {
         timeout: Number(process.env.AI_WORKER_TIMEOUT_MS || 15000),
@@ -321,7 +340,14 @@ const callPythonWorker = async ({ agentRunId, candidate, job, match, userId }) =
   }
 };
 
-const processExternalApplyLocally = async ({ agentRunId, candidate, job, match }) => {
+const processExternalApplyLocally = async ({
+  agentRunId,
+  candidate,
+  job,
+  match,
+  forceRetry = false,
+  retrySourceAgentRunId = null,
+}) => {
   await addAgentRunStep({
     agent_run_id: agentRunId,
     step_name: "candidate_approval_received",
@@ -373,17 +399,66 @@ const processExternalApplyLocally = async ({ agentRunId, candidate, job, match }
     },
   });
 
-  const application = await pool.query(
-    `INSERT INTO external_applications (
-      candidate_id,
-      external_job_id,
-      application_status,
-      failure_reason
-     )
-     VALUES ($1, $2, $3, $4)
-     RETURNING *`,
-    [candidate.candidate_id, job.external_job_id, applicationStatus, failureReason]
-  );
+  let application;
+
+  if (forceRetry) {
+    const retryApplicationResult = await pool.query(
+      `SELECT external_application_id, application_status
+       FROM external_applications
+       WHERE candidate_id = $1
+       AND external_job_id = $2
+       AND application_status <> 'Applied'
+       ORDER BY external_application_id DESC
+       LIMIT 1`,
+      [candidate.candidate_id, job.external_job_id]
+    );
+
+    if (retryApplicationResult.rows.length > 0) {
+      await addAgentRunStep({
+        agent_run_id: agentRunId,
+        step_name: "retry_existing_application",
+        step_order: 5,
+        details:
+          "Retry reused an existing non-final external application record.",
+        metadata: {
+          external_application_id:
+            retryApplicationResult.rows[0].external_application_id,
+          previous_status: retryApplicationResult.rows[0].application_status,
+          retry_source_agent_run_id: retrySourceAgentRunId,
+        },
+      });
+
+      application = await pool.query(
+        `UPDATE external_applications
+         SET application_status = $1,
+             failure_reason = $2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE external_application_id = $3
+         AND candidate_id = $4
+         RETURNING *`,
+        [
+          applicationStatus,
+          failureReason,
+          retryApplicationResult.rows[0].external_application_id,
+          candidate.candidate_id,
+        ]
+      );
+    }
+  }
+
+  if (!application) {
+    application = await pool.query(
+      `INSERT INTO external_applications (
+        candidate_id,
+        external_job_id,
+        application_status,
+        failure_reason
+       )
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [candidate.candidate_id, job.external_job_id, applicationStatus, failureReason]
+    );
+  }
 
   await addAgentRunStep({
     agent_run_id: agentRunId,
@@ -701,30 +776,36 @@ const getExternalWorkerHealth = async (req, res) => {
   }
 };
 
-const applyExternalJob = async (req, res) => {
+const executeExternalApplyAttempt = async ({
+  userId,
+  external_job_id,
+  forceRetry = false,
+  retrySourceAgentRunId = null,
+}) => {
   let agentRunId = null;
 
   try {
-    const { external_job_id } = req.body;
-
     if (!external_job_id) {
-      return res.status(400).json({
-        error: "external_job_id is required",
-      });
+      return {
+        statusCode: 400,
+        payload: { error: "external_job_id is required" },
+      };
     }
 
-    const candidate = await getCandidateForUser(req.user.user_id);
+    const candidate = await getCandidateForUser(userId);
 
     if (!candidate) {
-      return res.status(404).json({
-        error: "Candidate profile not found",
-      });
+      return {
+        statusCode: 404,
+        payload: { error: "Candidate profile not found" },
+      };
     }
 
     if (isProfileIncomplete(candidate)) {
-      return res.status(400).json({
-        error: "Please complete your profile before external apply",
-      });
+      return {
+        statusCode: 400,
+        payload: { error: "Please complete your profile before external apply" },
+      };
     }
 
     const jobResult = await pool.query(
@@ -736,9 +817,10 @@ const applyExternalJob = async (req, res) => {
     );
 
     if (jobResult.rows.length === 0) {
-      return res.status(404).json({
-        error: "External job not found",
-      });
+      return {
+        statusCode: 404,
+        payload: { error: "External job not found" },
+      };
     }
 
     const job = jobResult.rows[0];
@@ -747,8 +829,8 @@ const applyExternalJob = async (req, res) => {
     agentRunId = await createAgentRun({
       candidate_id: candidate.candidate_id,
       external_job_id,
-      requested_by_user_id: req.user.user_id,
-      run_type: "external_apply",
+      requested_by_user_id: userId,
+      run_type: forceRetry ? "external_apply_retry" : "external_apply",
       run_status: isWorkerEnabled() ? "queued" : "running",
       agent_name: isWorkerEnabled()
         ? "external_apply_orchestrator_python_worker"
@@ -762,6 +844,8 @@ const applyExternalJob = async (req, res) => {
         company_name: job.company_name,
         apply_mode: job.apply_mode,
         worker_enabled: isWorkerEnabled(),
+        force_retry: forceRetry,
+        retry_source_agent_run_id: retrySourceAgentRunId,
       },
     });
 
@@ -769,7 +853,7 @@ const applyExternalJob = async (req, res) => {
       await logAgentAttempt({
         candidate_id: candidate.candidate_id,
         external_job_id,
-        action_type: "external_apply_attempt",
+        action_type: forceRetry ? "external_apply_retry" : "external_apply_attempt",
         attempt_status: "skipped_low_match",
         source_platform: job.source_platform,
         failure_reason: "External job match score is too low for auto apply",
@@ -779,6 +863,7 @@ const applyExternalJob = async (req, res) => {
           missing_skills: match.missing_skills,
           apply_mode: job.apply_mode,
           agent_run_id: agentRunId,
+          retry_source_agent_run_id: retrySourceAgentRunId,
         },
       });
 
@@ -798,12 +883,17 @@ const applyExternalJob = async (req, res) => {
         error_message: "External job match score is too low for auto apply",
         metadata: {
           match_score: match.match_score,
+          force_retry: forceRetry,
         },
       });
 
-      return res.status(400).json({
-        error: "External job match score is too low for auto apply",
-      });
+      return {
+        statusCode: 400,
+        payload: {
+          error: "External job match score is too low for auto apply",
+          agent_run_id: agentRunId,
+        },
+      };
     }
 
     const existing = await pool.query(
@@ -817,51 +907,64 @@ const applyExternalJob = async (req, res) => {
     );
 
     if (existing.rows.length > 0) {
-      await logAgentAttempt({
-        candidate_id: candidate.candidate_id,
-        external_job_id,
-        external_application_id: existing.rows[0].external_application_id,
-        action_type: "external_apply_attempt",
-        attempt_status: "skipped_duplicate",
-        source_platform: job.source_platform,
-        failure_reason: "External application already exists",
-        metadata: {
-          existing_status: existing.rows[0].application_status,
-          match_score: match.match_score,
-          apply_mode: job.apply_mode,
+      const existingApplication = existing.rows[0];
+      const existingStatus = existingApplication.application_status;
+      const canRetryExisting =
+        forceRetry && RETRYABLE_APPLICATION_STATUSES.includes(existingStatus);
+
+      if (!canRetryExisting) {
+        await logAgentAttempt({
+          candidate_id: candidate.candidate_id,
+          external_job_id,
+          external_application_id: existingApplication.external_application_id,
+          action_type: forceRetry ? "external_apply_retry" : "external_apply_attempt",
+          attempt_status: "skipped_duplicate",
+          source_platform: job.source_platform,
+          failure_reason: "External application already exists",
+          metadata: {
+            existing_status: existingStatus,
+            match_score: match.match_score,
+            apply_mode: job.apply_mode,
+            agent_run_id: agentRunId,
+            retry_source_agent_run_id: retrySourceAgentRunId,
+          },
+        });
+
+        await addAgentRunStep({
           agent_run_id: agentRunId,
-        },
-      });
+          step_name: "duplicate_application_detected",
+          step_status: "skipped",
+          step_order: 1,
+          details:
+            "Agent found an existing external application and did not create a duplicate.",
+          metadata: {
+            existing_status: existingStatus,
+            external_application_id: existingApplication.external_application_id,
+          },
+        });
 
-      await addAgentRunStep({
-        agent_run_id: agentRunId,
-        step_name: "duplicate_application_detected",
-        step_status: "skipped",
-        step_order: 1,
-        details: "Agent found an existing external application and did not create a duplicate.",
-        metadata: {
-          existing_status: existing.rows[0].application_status,
-          external_application_id: existing.rows[0].external_application_id,
-        },
-      });
+        await finishAgentRun({
+          agent_run_id: agentRunId,
+          run_status: "skipped",
+          current_step: "duplicate_application_detected",
+          summary: "External apply skipped because application already exists.",
+          external_application_id: existingApplication.external_application_id,
+          metadata: {
+            existing_status: existingStatus,
+            match_score: match.match_score,
+          },
+        });
 
-      await finishAgentRun({
-        agent_run_id: agentRunId,
-        run_status: "skipped",
-        current_step: "duplicate_application_detected",
-        summary: "External apply skipped because application already exists.",
-        external_application_id: existing.rows[0].external_application_id,
-        metadata: {
-          existing_status: existing.rows[0].application_status,
-          match_score: match.match_score,
-        },
-      });
-
-      return res.status(409).json({
-        error: "External application already exists",
-        external_application_id: existing.rows[0].external_application_id,
-        application_status: existing.rows[0].application_status,
-      });
+        return {
+          statusCode: 409,
+          payload: {
+            error: "External application already exists",
+            external_application_id: existingApplication.external_application_id,
+            application_status: existingStatus,
+            agent_run_id: agentRunId,
+          },
+        };
+      }
     }
 
     const workerResult = await callPythonWorker({
@@ -869,39 +972,50 @@ const applyExternalJob = async (req, res) => {
       candidate,
       job,
       match,
-      userId: req.user.user_id,
+      userId,
+      forceRetry,
+      retrySourceAgentRunId,
     });
 
     if (workerResult) {
       if (workerResult.outcome === "skipped_low_match") {
-        return res.status(400).json({
-          error: workerResult.message,
-          agent_run_id: agentRunId,
-        });
+        return {
+          statusCode: 400,
+          payload: { error: workerResult.message, agent_run_id: agentRunId },
+        };
       }
 
       if (workerResult.outcome === "skipped_duplicate") {
-        return res.status(409).json({
-          error: workerResult.message,
-          external_application_id: workerResult.external_application_id,
-          application_status: workerResult.application_status,
-          agent_run_id: agentRunId,
-        });
+        return {
+          statusCode: 409,
+          payload: {
+            error: workerResult.message,
+            external_application_id: workerResult.external_application_id,
+            application_status: workerResult.application_status,
+            agent_run_id: agentRunId,
+          },
+        };
       }
 
-      return res.status(200).json({
-        message: workerResult.message,
-        externalApplication: {
-          ...(workerResult.externalApplication || {}),
-          job_title: job.job_title,
-          company_name: job.company_name,
-          source_platform: job.source_platform,
-          job_url: job.job_url,
-          match_score: match.match_score,
+      return {
+        statusCode: 200,
+        payload: {
+          message: forceRetry
+            ? `Retry completed: ${workerResult.message}`
+            : workerResult.message,
+          externalApplication: {
+            ...(workerResult.externalApplication || {}),
+            job_title: job.job_title,
+            company_name: job.company_name,
+            source_platform: job.source_platform,
+            job_url: job.job_url,
+            match_score: match.match_score,
+          },
+          agent_run_id: agentRunId,
+          used_worker: true,
+          retried: forceRetry,
         },
-        agent_run_id: agentRunId,
-        used_worker: true,
-      });
+      };
     }
 
     const localResult = await processExternalApplyLocally({
@@ -909,21 +1023,29 @@ const applyExternalJob = async (req, res) => {
       candidate,
       job,
       match,
+      forceRetry,
+      retrySourceAgentRunId,
     });
 
-    return res.status(200).json({
-      message: localResult.message,
-      externalApplication: {
-        ...localResult.externalApplication,
-        job_title: job.job_title,
-        company_name: job.company_name,
-        source_platform: job.source_platform,
-        job_url: job.job_url,
-        match_score: match.match_score,
+    return {
+      statusCode: 200,
+      payload: {
+        message: forceRetry
+          ? `Retry completed: ${localResult.message}`
+          : localResult.message,
+        externalApplication: {
+          ...localResult.externalApplication,
+          job_title: job.job_title,
+          company_name: job.company_name,
+          source_platform: job.source_platform,
+          job_url: job.job_url,
+          match_score: match.match_score,
+        },
+        agent_run_id: agentRunId,
+        used_worker: false,
+        retried: forceRetry,
       },
-      agent_run_id: agentRunId,
-      used_worker: false,
-    });
+    };
   } catch (error) {
     console.log(error);
 
@@ -935,8 +1057,237 @@ const applyExternalJob = async (req, res) => {
       error_message: error.message,
     });
 
+    return {
+      statusCode: 500,
+      payload: { error: "External application failed" },
+    };
+  }
+};
+
+const applyExternalJob = async (req, res) => {
+  const { external_job_id } = req.body;
+
+  const result = await executeExternalApplyAttempt({
+    userId: req.user.user_id,
+    external_job_id,
+    forceRetry: false,
+  });
+
+  return res.status(result.statusCode).json(result.payload);
+};
+
+const retryExternalAgentRun = async (req, res) => {
+  try {
+    const agentRunId = Number(req.params.agentRunId);
+
+    if (!agentRunId) {
+      return res.status(400).json({
+        error: "Valid agent run id is required",
+      });
+    }
+
+    const candidate = await getCandidateForUser(req.user.user_id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
+
+    const runResult = await pool.query(
+      `SELECT
+        aar.agent_run_id,
+        aar.external_job_id,
+        aar.external_application_id,
+        aar.run_status,
+        ej.is_active,
+        ej.job_title,
+        ej.company_name
+       FROM ai_agent_runs aar
+       LEFT JOIN external_jobs ej
+       ON ej.external_job_id = aar.external_job_id
+       WHERE aar.agent_run_id = $1
+       AND aar.candidate_id = $2`,
+      [agentRunId, candidate.candidate_id]
+    );
+
+    if (runResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Agent run not found",
+      });
+    }
+
+    const run = runResult.rows[0];
+
+    if (!run.external_job_id || run.is_active === false) {
+      return res.status(400).json({
+        error: "This agent run cannot be retried because the external job is unavailable",
+      });
+    }
+
+    if (!RETRYABLE_AGENT_RUN_STATUSES.includes(run.run_status)) {
+      return res.status(400).json({
+        error: "Only failed, skipped, cancelled, or manual-action runs can be retried",
+      });
+    }
+
+    const retryResult = await executeExternalApplyAttempt({
+      userId: req.user.user_id,
+      external_job_id: run.external_job_id,
+      forceRetry: true,
+      retrySourceAgentRunId: agentRunId,
+    });
+
+    return res.status(retryResult.statusCode).json(retryResult.payload);
+  } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
-      error: "External application failed",
+      error: "Unable to retry agent run",
+    });
+  }
+};
+
+const cancelExternalAgentRun = async (req, res) => {
+  try {
+    const agentRunId = Number(req.params.agentRunId);
+
+    if (!agentRunId) {
+      return res.status(400).json({
+        error: "Valid agent run id is required",
+      });
+    }
+
+    const candidate = await getCandidateForUser(req.user.user_id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
+
+    const runResult = await pool.query(
+      `SELECT
+        aar.agent_run_id,
+        aar.external_job_id,
+        aar.external_application_id,
+        aar.run_status,
+        aar.source_platform,
+        ej.job_title,
+        ej.company_name,
+        ea.application_status
+       FROM ai_agent_runs aar
+       LEFT JOIN external_jobs ej
+       ON ej.external_job_id = aar.external_job_id
+       LEFT JOIN external_applications ea
+       ON ea.external_application_id = aar.external_application_id
+       WHERE aar.agent_run_id = $1
+       AND aar.candidate_id = $2`,
+      [agentRunId, candidate.candidate_id]
+    );
+
+    if (runResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Agent run not found",
+      });
+    }
+
+    const run = runResult.rows[0];
+
+    if (run.run_status === "cancelled") {
+      return res.status(200).json({
+        message: "Agent run is already cancelled",
+      });
+    }
+
+    if (run.run_status === "completed" && run.application_status === "Applied") {
+      return res.status(400).json({
+        error: "Completed applied run cannot be cancelled",
+      });
+    }
+
+    if (!ACTIVE_AGENT_RUN_STATUSES.includes(run.run_status)) {
+      return res.status(400).json({
+        error: "Only queued, running, or manual-action runs can be cancelled",
+      });
+    }
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "candidate_cancelled_run",
+      step_status: "cancelled",
+      step_order: 99,
+      details: "Candidate cancelled this AI agent run from the dashboard.",
+    });
+
+    let cancelledApplication = null;
+
+    if (run.external_application_id && run.application_status === "Pending") {
+      const applicationResult = await pool.query(
+        `UPDATE external_applications
+         SET application_status = 'Cancelled',
+             failure_reason = 'Candidate cancelled this external apply run before manual completion.',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE external_application_id = $1
+         AND candidate_id = $2
+         AND application_status = 'Pending'
+         RETURNING *`,
+        [run.external_application_id, candidate.candidate_id]
+      );
+
+      cancelledApplication = applicationResult.rows[0] || null;
+
+      await addAgentRunStep({
+        agent_run_id: agentRunId,
+        step_name: "external_application_cancelled",
+        step_status: "cancelled",
+        step_order: 100,
+        details: "Pending external application was marked as Cancelled.",
+        metadata: {
+          external_application_id: run.external_application_id,
+        },
+      });
+    }
+
+    await logAgentAttempt({
+      candidate_id: candidate.candidate_id,
+      external_job_id: run.external_job_id,
+      external_application_id: run.external_application_id,
+      action_type: "agent_run_cancelled",
+      attempt_status: "cancelled",
+      source_platform: run.source_platform,
+      failure_reason: "Candidate cancelled the AI agent run",
+      metadata: {
+        agent_run_id: agentRunId,
+        previous_run_status: run.run_status,
+        previous_application_status: run.application_status,
+      },
+    });
+
+    await finishAgentRun({
+      agent_run_id: agentRunId,
+      run_status: "cancelled",
+      current_step: "cancelled",
+      summary: "Candidate cancelled this AI agent run.",
+      external_application_id: run.external_application_id,
+      metadata: {
+        cancelled_by_candidate: true,
+        previous_run_status: run.run_status,
+        application_cancelled: Boolean(cancelledApplication),
+      },
+    });
+
+    return res.status(200).json({
+      message: cancelledApplication
+        ? "Agent run cancelled and pending external application marked Cancelled"
+        : "Agent run cancelled",
+      externalApplication: cancelledApplication,
+    });
+  } catch (error) {
+    console.log(error);
+
+    return res.status(500).json({
+      error: "Unable to cancel agent run",
     });
   }
 };
@@ -1118,5 +1469,7 @@ module.exports = {
   getExternalAgentRuns,
   getExternalWorkerHealth,
   applyExternalJob,
+  retryExternalAgentRun,
+  cancelExternalAgentRun,
   completeExternalApplication,
 };

@@ -1308,3 +1308,33 @@ button:disabled {
   background: #fef3c7;
   color: #92400e;
 }
+
+/* Worker Robustness + Run Controls */
+.status-cancelled {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.agent-run-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+
+.agent-run-controls .small-button {
+  min-height: 34px;
+}
+
+@media (max-width: 700px) {
+  .agent-run-controls {
+    flex-direction: column;
+  }
+
+  .agent-run-controls .secondary-button,
+  .agent-run-controls .danger-button {
+    width: 100%;
+  }
+}
