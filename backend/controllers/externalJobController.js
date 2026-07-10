@@ -97,6 +97,13 @@ const workerBaseUrl = () =>
 const isWorkerEnabled = () =>
   String(process.env.AI_WORKER_ENABLED || "false").toLowerCase() === "true";
 
+const shouldQueueExternalRuns = () =>
+  isWorkerEnabled() &&
+  String(process.env.AI_AGENT_QUEUE_ENABLED || "true").toLowerCase() === "true";
+
+const isFinalRunStatus = (status) =>
+  ["completed", "failed", "skipped", "cancelled"].includes(status);
+
 const RETRYABLE_APPLICATION_STATUSES = ["Pending", "Cancelled", "Failed"];
 const ACTIVE_AGENT_RUN_STATUSES = ["queued", "running", "needs_manual_action"];
 const RETRYABLE_AGENT_RUN_STATUSES = [
@@ -158,6 +165,8 @@ const createAgentRun = async ({
   source_platform = null,
   current_step = "queued",
   metadata = {},
+  queue_priority = 5,
+  max_attempts = 3,
 }) => {
   try {
     const result = await pool.query(
@@ -173,9 +182,16 @@ const createAgentRun = async ({
         approval_status,
         current_step,
         metadata,
+        queue_priority,
+        next_attempt_at,
+        attempt_count,
+        max_attempts,
         started_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, CURRENT_TIMESTAMP)
+       VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb,
+        $12, CURRENT_TIMESTAMP, 0, $13, CURRENT_TIMESTAMP
+       )
        RETURNING agent_run_id`,
       [
         candidate_id,
@@ -189,6 +205,8 @@ const createAgentRun = async ({
         "candidate_approved",
         current_step,
         JSON.stringify(metadata || {}),
+        queue_priority,
+        max_attempts,
       ]
     );
 
@@ -258,6 +276,10 @@ const finishAgentRun = async ({
            error_message = $4,
            external_application_id = COALESCE($5, external_application_id),
            metadata = COALESCE(metadata, '{}'::jsonb) || $6::jsonb,
+           locked_by = CASE WHEN $8 THEN NULL ELSE locked_by END,
+           locked_at = CASE WHEN $8 THEN NULL ELSE locked_at END,
+           last_heartbeat_at = CURRENT_TIMESTAMP,
+           queue_error = $9,
            completed_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
        WHERE agent_run_id = $7`,
@@ -269,10 +291,59 @@ const finishAgentRun = async ({
         external_application_id,
         JSON.stringify(metadata || {}),
         agent_run_id,
+        isFinalRunStatus(run_status) || run_status === "needs_manual_action",
+        error_message,
       ]
     );
   } catch (error) {
     console.log("AGENT RUN FINISH ERROR:", error.message);
+  }
+};
+
+const syncResolvedManualAgentRuns = async (candidateId, externalApplicationId = null) => {
+  try {
+    await pool.query(
+      `UPDATE ai_agent_runs aar
+       SET run_status = CASE
+             WHEN ea.application_status = 'Applied' THEN 'completed'
+             WHEN ea.application_status = 'Cancelled' THEN 'cancelled'
+             WHEN ea.application_status = 'Failed' THEN 'failed'
+             ELSE aar.run_status
+           END,
+           current_step = CASE
+             WHEN ea.application_status = 'Applied' THEN 'manual_completed'
+             WHEN ea.application_status = 'Cancelled' THEN 'cancelled'
+             WHEN ea.application_status = 'Failed' THEN 'failed'
+             ELSE aar.current_step
+           END,
+           summary = CASE
+             WHEN ea.application_status = 'Applied'
+               THEN 'Manual external application was completed by candidate.'
+             WHEN ea.application_status = 'Cancelled'
+               THEN 'Manual external application was cancelled.'
+             WHEN ea.application_status = 'Failed'
+               THEN 'Manual external application failed.'
+             ELSE aar.summary
+           END,
+           metadata = COALESCE(aar.metadata, '{}'::jsonb) || jsonb_build_object(
+             'resolved_by_external_application_status', ea.application_status,
+             'resolved_at', CURRENT_TIMESTAMP
+           ),
+           locked_by = NULL,
+           locked_at = NULL,
+           last_heartbeat_at = CURRENT_TIMESTAMP,
+           completed_at = COALESCE(aar.completed_at, CURRENT_TIMESTAMP),
+           updated_at = CURRENT_TIMESTAMP
+       FROM external_applications ea
+       WHERE aar.external_application_id = ea.external_application_id
+       AND aar.candidate_id = $1
+       AND aar.run_status = 'needs_manual_action'
+       AND ea.application_status IN ('Applied', 'Cancelled', 'Failed')
+       AND ($2::int IS NULL OR ea.external_application_id = $2)`,
+      [candidateId, externalApplicationId]
+    );
+  } catch (error) {
+    console.log("AGENT RUN SYNC ERROR:", error.message);
   }
 };
 
@@ -290,6 +361,19 @@ const callPythonWorker = async ({
   }
 
   try {
+    await pool.query(
+      `UPDATE ai_agent_runs
+       SET run_status = 'running',
+           current_step = 'dispatching_to_python_worker',
+           locked_by = $2,
+           locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP),
+           last_heartbeat_at = CURRENT_TIMESTAMP,
+           attempt_count = COALESCE(attempt_count, 0) + 1,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE agent_run_id = $1`,
+      [agentRunId, "node_backend_dispatcher"]
+    );
+
     const response = await axios.post(
       `${workerBaseUrl()}/simulate-external-apply`,
       {
@@ -335,6 +419,17 @@ const callPythonWorker = async ({
         error: error.message,
       },
     });
+
+    await pool.query(
+      `UPDATE ai_agent_runs
+       SET queue_error = $2,
+           locked_by = NULL,
+           locked_at = NULL,
+           last_heartbeat_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE agent_run_id = $1`,
+      [agentRunId, error.message]
+    );
 
     return null;
   }
@@ -683,6 +778,8 @@ const getExternalAgentRuns = async (req, res) => {
       });
     }
 
+    await syncResolvedManualAgentRuns(candidate.candidate_id);
+
     const result = await pool.query(
       `SELECT
         aar.agent_run_id,
@@ -695,9 +792,19 @@ const getExternalAgentRuns = async (req, res) => {
         aar.source_platform,
         aar.approval_status,
         aar.current_step,
+        ea.application_status AS external_application_status,
+        ea.failure_reason AS external_application_failure_reason,
         aar.summary,
         aar.error_message,
         aar.metadata,
+        aar.queue_priority,
+        aar.locked_by,
+        aar.locked_at,
+        aar.last_heartbeat_at,
+        aar.attempt_count,
+        aar.max_attempts,
+        aar.next_attempt_at,
+        aar.queue_error,
         aar.started_at,
         aar.completed_at,
         aar.created_at,
@@ -721,10 +828,17 @@ const getExternalAgentRuns = async (req, res) => {
        FROM ai_agent_runs aar
        LEFT JOIN external_jobs ej
        ON ej.external_job_id = aar.external_job_id
+       LEFT JOIN external_applications ea
+       ON ea.external_application_id = aar.external_application_id
        LEFT JOIN ai_agent_run_steps ars
        ON ars.agent_run_id = aar.agent_run_id
        WHERE aar.candidate_id = $1
-       GROUP BY aar.agent_run_id, ej.job_title, ej.company_name
+       GROUP BY
+        aar.agent_run_id,
+        ej.job_title,
+        ej.company_name,
+        ea.application_status,
+        ea.failure_reason
        ORDER BY aar.created_at DESC, aar.agent_run_id DESC
        LIMIT 15`,
       [candidate.candidate_id]
@@ -774,6 +888,92 @@ const getExternalWorkerHealth = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+const dispatchExternalApplyProcessing = async ({
+  agentRunId,
+  candidate,
+  job,
+  match,
+  userId,
+  forceRetry = false,
+  retrySourceAgentRunId = null,
+}) => {
+  const workerResult = await callPythonWorker({
+    agentRunId,
+    candidate,
+    job,
+    match,
+    userId,
+    forceRetry,
+    retrySourceAgentRunId,
+  });
+
+  if (workerResult) {
+    return {
+      usedWorker: true,
+      workerResult,
+      localResult: null,
+    };
+  }
+
+  const localResult = await processExternalApplyLocally({
+    agentRunId,
+    candidate,
+    job,
+    match,
+    forceRetry,
+    retrySourceAgentRunId,
+  });
+
+  return {
+    usedWorker: false,
+    workerResult: null,
+    localResult,
+  };
+};
+
+const startBackgroundExternalApplyProcessing = ({
+  agentRunId,
+  candidate,
+  job,
+  match,
+  userId,
+  forceRetry = false,
+  retrySourceAgentRunId = null,
+}) => {
+  setImmediate(async () => {
+    try {
+      await dispatchExternalApplyProcessing({
+        agentRunId,
+        candidate,
+        job,
+        match,
+        userId,
+        forceRetry,
+        retrySourceAgentRunId,
+      });
+    } catch (error) {
+      console.log("BACKGROUND AGENT RUN ERROR:", error.message);
+
+      await addAgentRunStep({
+        agent_run_id: agentRunId,
+        step_name: "background_processing_failed",
+        step_status: "failed",
+        step_order: 101,
+        details: "Background queue worker failed while processing this agent run.",
+        metadata: { error: error.message },
+      });
+
+      await finishAgentRun({
+        agent_run_id: agentRunId,
+        run_status: "failed",
+        current_step: "failed",
+        summary: "Background external apply processing failed.",
+        error_message: error.message,
+      });
+    }
+  });
 };
 
 const executeExternalApplyAttempt = async ({
@@ -844,10 +1044,25 @@ const executeExternalApplyAttempt = async ({
         company_name: job.company_name,
         apply_mode: job.apply_mode,
         worker_enabled: isWorkerEnabled(),
+        queue_enabled: shouldQueueExternalRuns(),
         force_retry: forceRetry,
         retry_source_agent_run_id: retrySourceAgentRunId,
       },
     });
+
+    if (agentRunId && isWorkerEnabled()) {
+      await addAgentRunStep({
+        agent_run_id: agentRunId,
+        step_name: "queued_for_worker",
+        step_status: "queued",
+        step_order: 0,
+        details: "AI agent run queued for Python worker processing.",
+        metadata: {
+          worker_url: workerBaseUrl(),
+          queue_enabled: shouldQueueExternalRuns(),
+        },
+      });
+    }
 
     if (match.match_score < 40) {
       await logAgentAttempt({
@@ -967,7 +1182,32 @@ const executeExternalApplyAttempt = async ({
       }
     }
 
-    const workerResult = await callPythonWorker({
+    if (shouldQueueExternalRuns()) {
+      startBackgroundExternalApplyProcessing({
+        agentRunId,
+        candidate,
+        job,
+        match,
+        userId,
+        forceRetry,
+        retrySourceAgentRunId,
+      });
+
+      return {
+        statusCode: 202,
+        payload: {
+          message: forceRetry
+            ? "AI agent retry queued. Live progress will update shortly."
+            : "AI agent run queued. Live progress will update shortly.",
+          agent_run_id: agentRunId,
+          queued: true,
+          retried: forceRetry,
+          external_job_id,
+        },
+      };
+    }
+
+    const processingResult = await dispatchExternalApplyProcessing({
       agentRunId,
       candidate,
       job,
@@ -977,7 +1217,9 @@ const executeExternalApplyAttempt = async ({
       retrySourceAgentRunId,
     });
 
-    if (workerResult) {
+    if (processingResult.workerResult) {
+      const workerResult = processingResult.workerResult;
+
       if (workerResult.outcome === "skipped_low_match") {
         return {
           statusCode: 400,
@@ -1018,14 +1260,7 @@ const executeExternalApplyAttempt = async ({
       };
     }
 
-    const localResult = await processExternalApplyLocally({
-      agentRunId,
-      candidate,
-      job,
-      match,
-      forceRetry,
-      retrySourceAgentRunId,
-    });
+    const localResult = processingResult.localResult;
 
     return {
       statusCode: 200,
@@ -1397,6 +1632,11 @@ const completeExternalApplication = async (req, res) => {
        AND application_status = 'Pending'
        RETURNING *`,
       [external_application_id, candidate.candidate_id]
+    );
+
+    await syncResolvedManualAgentRuns(
+      candidate.candidate_id,
+      result.rows[0].external_application_id
     );
 
     await addAgentRunStep({

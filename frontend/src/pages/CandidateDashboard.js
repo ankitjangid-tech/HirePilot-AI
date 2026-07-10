@@ -102,6 +102,10 @@ const agentStepLabels = {
   match_score_calculated: "Match score calculated",
   external_portal_assessed: "External portal assessed",
   application_record_created: "Application record created",
+  queued_for_worker: "Queued for worker",
+  dispatching_to_python_worker: "Dispatching to Python worker",
+  worker_claimed: "Worker claimed run",
+  background_processing_failed: "Background processing failed",
   waiting_for_candidate: "Waiting for candidate",
   duplicate_application_detected: "Duplicate detected",
   skipped_low_match: "Skipped: low match",
@@ -186,13 +190,26 @@ const notificationClass = (type) =>
 
 const displayValue = (value) => value || "Not added";
 
+const isFinalExternalApplicationStatus = (status) =>
+  ["Applied", "Cancelled", "Failed"].includes(status);
+
+const isResolvedManualRun = (run) =>
+  run?.run_status === "needs_manual_action" &&
+  isFinalExternalApplicationStatus(run?.external_application_status);
+
 const canRetryAgentRun = (run) =>
-  ["failed", "needs_manual_action", "skipped", "cancelled"].includes(
-    run?.run_status
-  );
+  ["failed", "skipped", "cancelled"].includes(run?.run_status) ||
+  (run?.run_status === "needs_manual_action" && !isResolvedManualRun(run));
 
 const canCancelAgentRun = (run) =>
-  ["queued", "running", "needs_manual_action"].includes(run?.run_status);
+  ["queued", "running"].includes(run?.run_status) ||
+  (run?.run_status === "needs_manual_action" && !isResolvedManualRun(run));
+
+const isProcessingAgentRun = (run) =>
+  ["queued", "running"].includes(run?.run_status);
+
+const isWaitingAgentRun = (run) =>
+  run?.run_status === "needs_manual_action" && !isResolvedManualRun(run);
 
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
@@ -224,6 +241,8 @@ function CandidateDashboard() {
   const [externalApplyingId, setExternalApplyingId] = useState(null);
   const [completingExternalApplicationId, setCompletingExternalApplicationId] = useState(null);
   const [agentRunActionId, setAgentRunActionId] = useState(null);
+  const [agentRefreshLoading, setAgentRefreshLoading] = useState(false);
+  const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   const fetchDashboardData = async () => {
@@ -314,9 +333,77 @@ function CandidateDashboard() {
     }
   };
 
+  const fetchExternalAgentData = async ({ silent = false } = {}) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        return;
+      }
+
+      if (!silent) {
+        setAgentRefreshLoading(true);
+      }
+
+      try {
+        const workerHealthResponse = await getExternalWorkerHealth(token);
+        setExternalWorkerHealth(workerHealthResponse.data);
+      } catch (workerHealthError) {
+        console.log(
+          "EXTERNAL WORKER HEALTH REFRESH ERROR:",
+          workerHealthError.response?.data || workerHealthError.message
+        );
+        setExternalWorkerHealth(null);
+      }
+
+      const externalJobsResponse = await getMatchedExternalJobs(token);
+      setExternalJobs(externalJobsResponse.data.matchedExternalJobs || []);
+
+      const externalApplicationsResponse = await getExternalApplications(token);
+      setExternalApplications(
+        externalApplicationsResponse.data.externalApplications || []
+      );
+
+      const externalAgentRunsResponse = await getExternalAgentRuns(token);
+      setExternalAgentRuns(externalAgentRunsResponse.data.agentRuns || []);
+
+      const externalAgentLogsResponse = await getExternalAgentLogs(token);
+      setExternalAgentLogs(externalAgentLogsResponse.data.agentLogs || []);
+
+      setLastAgentRefreshAt(new Date());
+    } catch (error) {
+      console.log(
+        "EXTERNAL AGENT LIVE REFRESH ERROR:",
+        error.response?.data || error.message
+      );
+
+      if (!silent) {
+        setExternalMessage("Unable to refresh agent progress");
+      }
+    } finally {
+      if (!silent) {
+        setAgentRefreshLoading(false);
+      }
+    }
+  };
+
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  useEffect(() => {
+    const hasProcessingRuns = externalAgentRuns.some(isProcessingAgentRun);
+
+    if (!hasProcessingRuns) {
+      return undefined;
+    }
+
+    const refreshTimer = window.setInterval(() => {
+      fetchExternalAgentData({ silent: true });
+    }, 3500);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [externalAgentRuns]);
 
   const handleProfileInputChange = (event) => {
     const { name, value } = event.target;
@@ -488,7 +575,8 @@ function CandidateDashboard() {
 
       const response = await applyExternalJob(token, externalJobId);
 
-      setExternalMessage(response.data.message);
+      setExternalMessage(response.data.message || "External agent run started");
+      await fetchExternalAgentData({ silent: true });
       await fetchDashboardData();
     } catch (error) {
       console.log("EXTERNAL APPLY ERROR:", error.response?.data || error.message);
@@ -543,7 +631,8 @@ function CandidateDashboard() {
 
       const response = await retryExternalAgentRun(token, agentRunId);
 
-      setExternalMessage(response.data.message || "Agent run retry completed");
+      setExternalMessage(response.data.message || "Agent run retry started");
+      await fetchExternalAgentData({ silent: true });
       await fetchDashboardData();
     } catch (error) {
       console.log("RETRY AGENT RUN ERROR:", error.response?.data || error.message);
@@ -691,6 +780,9 @@ function CandidateDashboard() {
       notification.interview_date &&
       notification.notification_type !== "interview_cancelled"
   );
+
+  const processingRunsCount = externalAgentRuns.filter(isProcessingAgentRun).length;
+  const waitingRunsCount = externalAgentRuns.filter(isWaitingAgentRun).length;
 
   return (
     <main className="dashboard-shell">
@@ -1335,6 +1427,38 @@ function CandidateDashboard() {
                 </span>
               </p>
             )}
+
+            <div className="live-progress-row">
+              <span
+                className={
+                  processingRunsCount > 0
+                    ? "worker-status running"
+                    : waitingRunsCount > 0
+                    ? "worker-status waiting"
+                    : "worker-status idle"
+                }
+              >
+                {processingRunsCount > 0
+                  ? `Live progress active: ${processingRunsCount}`
+                  : waitingRunsCount > 0
+                  ? `Waiting for candidate: ${waitingRunsCount}`
+                  : "Live progress idle"}
+              </span>
+
+              <button
+                className="secondary-button small-button"
+                onClick={() => fetchExternalAgentData({ silent: false })}
+                disabled={agentRefreshLoading}
+              >
+                {agentRefreshLoading ? "Refreshing..." : "Refresh Timeline"}
+              </button>
+
+              {lastAgentRefreshAt && (
+                <span className="live-progress-time">
+                  Last sync: {lastAgentRefreshAt.toLocaleTimeString()}
+                </span>
+              )}
+            </div>
           </div>
           <span className="count-pill">{externalAgentRuns.length}</span>
         </div>
@@ -1344,7 +1468,12 @@ function CandidateDashboard() {
         ) : (
           <div className="agent-run-list">
             {externalAgentRuns.map((run) => (
-              <article className="agent-run-card" key={run.agent_run_id}>
+              <article
+                className={`agent-run-card ${
+                  isProcessingAgentRun(run) ? "active-run" : ""
+                }`}
+                key={run.agent_run_id}
+              >
                 <div className="agent-run-header">
                   <div>
                     <span className={statusClass(run.run_status)}>
@@ -1361,6 +1490,13 @@ function CandidateDashboard() {
                     {run.metadata?.match_score !== undefined && (
                       <span>Match: {run.metadata.match_score}%</span>
                     )}
+                    {run.current_step && (
+                      <span>Step: {agentStepLabels[run.current_step] || run.current_step}</span>
+                    )}
+                    {run.attempt_count !== undefined && run.max_attempts !== undefined && (
+                      <span>Attempts: {run.attempt_count}/{run.max_attempts}</span>
+                    )}
+                    {run.locked_by && <span>Worker: {run.locked_by}</span>}
                     <span>{new Date(run.created_at).toLocaleString()}</span>
                   </div>
                 </div>
@@ -1368,6 +1504,9 @@ function CandidateDashboard() {
                 {run.summary && <p className="helper-text">{run.summary}</p>}
                 {run.error_message && (
                   <p className="helper-text error-text">{run.error_message}</p>
+                )}
+                {run.queue_error && !run.error_message && (
+                  <p className="helper-text error-text">Queue error: {run.queue_error}</p>
                 )}
 
                 <div className="agent-step-timeline">

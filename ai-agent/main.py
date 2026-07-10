@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
@@ -112,6 +112,10 @@ def update_run(
             error_message = %s,
             external_application_id = COALESCE(%s, external_application_id),
             metadata = COALESCE(metadata, '{}'::jsonb) || %s::jsonb,
+            locked_by = CASE WHEN %s THEN NULL ELSE COALESCE(locked_by, %s) END,
+            locked_at = CASE WHEN %s THEN NULL ELSE COALESCE(locked_at, CURRENT_TIMESTAMP) END,
+            last_heartbeat_at = CURRENT_TIMESTAMP,
+            queue_error = %s,
             completed_at = CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE completed_at END,
             updated_at = CURRENT_TIMESTAMP
         WHERE agent_run_id = %s
@@ -123,6 +127,10 @@ def update_run(
             error_message,
             external_application_id,
             json_dump(metadata),
+            completed or run_status in {"completed", "failed", "skipped", "cancelled"},
+            WORKER_NAME,
+            completed or run_status in {"completed", "failed", "skipped", "cancelled"},
+            error_message,
             completed,
             agent_run_id,
         ),
@@ -189,6 +197,167 @@ class ExternalApplyPayload(BaseModel):
     retry_source_agent_run_id: Optional[int] = None
 
 
+def split_skills(skills: Optional[str]) -> List[str]:
+    if not skills:
+        return []
+
+    return [skill.strip().lower() for skill in skills.split(",") if skill.strip()]
+
+
+def calculate_match(candidate: Dict[str, Any], job: Dict[str, Any]) -> Dict[str, Any]:
+    candidate_skills = split_skills(candidate.get("skills"))
+    job_skills = split_skills(job.get("required_skills"))
+
+    matched_skills = []
+    missing_skills = []
+
+    for skill in job_skills:
+        label = " ".join(part.capitalize() for part in skill.split(" "))
+        if skill in candidate_skills:
+            matched_skills.append(label)
+        else:
+            missing_skills.append(label)
+
+    score = len(matched_skills) * 20
+
+    preferred_role = candidate.get("preferred_role")
+    if preferred_role and job.get("job_title"):
+        role_key = preferred_role.lower().split(" ")[0]
+        if role_key in job["job_title"].lower():
+            score += 10
+
+    preferred_location = candidate.get("preferred_location")
+    if preferred_location and job.get("location"):
+        if preferred_location.lower() in job["location"].lower():
+            score += 10
+
+    return {
+        "match_score": min(score, 100),
+        "matched_skills": matched_skills,
+        "missing_skills": missing_skills,
+    }
+
+
+def get_queue_stats(cursor) -> Dict[str, int]:
+    cursor.execute(
+        """
+        SELECT
+          COUNT(*) FILTER (WHERE run_status = 'queued') AS queued,
+          COUNT(*) FILTER (WHERE run_status = 'running') AS running,
+          COUNT(*) FILTER (WHERE run_status = 'needs_manual_action') AS needs_manual_action,
+          COUNT(*) FILTER (WHERE run_status = 'failed') AS failed
+        FROM ai_agent_runs
+        WHERE run_type IN ('external_apply', 'external_apply_retry')
+        """
+    )
+    row = cursor.fetchone() or {}
+    return {
+        "queued": int(row.get("queued") or 0),
+        "running": int(row.get("running") or 0),
+        "needs_manual_action": int(row.get("needs_manual_action") or 0),
+        "failed": int(row.get("failed") or 0),
+    }
+
+
+def claim_next_queued_run(cursor) -> Optional[Dict[str, Any]]:
+    cursor.execute(
+        """
+        SELECT
+          aar.agent_run_id,
+          aar.candidate_id,
+          aar.external_job_id,
+          aar.requested_by_user_id,
+          aar.run_type,
+          aar.attempt_count,
+          aar.max_attempts,
+          c.skills,
+          c.experience_years,
+          c.preferred_role,
+          c.preferred_location,
+          ej.job_title,
+          ej.company_name,
+          ej.source_platform,
+          ej.job_url,
+          ej.apply_mode,
+          ej.required_skills,
+          ej.location
+        FROM ai_agent_runs aar
+        JOIN candidates c ON c.candidate_id = aar.candidate_id
+        JOIN external_jobs ej ON ej.external_job_id = aar.external_job_id
+        WHERE aar.run_status = 'queued'
+        AND (aar.next_attempt_at IS NULL OR aar.next_attempt_at <= CURRENT_TIMESTAMP)
+        AND (aar.locked_at IS NULL OR aar.locked_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes')
+        ORDER BY COALESCE(aar.queue_priority, 5) ASC, aar.created_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+        """
+    )
+    run = cursor.fetchone()
+
+    if not run:
+        return None
+
+    cursor.execute(
+        """
+        UPDATE ai_agent_runs
+        SET run_status = 'running',
+            current_step = 'worker_claimed',
+            locked_by = %s,
+            locked_at = CURRENT_TIMESTAMP,
+            last_heartbeat_at = CURRENT_TIMESTAMP,
+            attempt_count = COALESCE(attempt_count, 0) + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE agent_run_id = %s
+        """,
+        (WORKER_NAME, run["agent_run_id"]),
+    )
+
+    add_step(
+        cursor,
+        run["agent_run_id"],
+        "worker_claimed",
+        1,
+        "Python worker claimed this queued agent run for processing.",
+        metadata={"worker_name": WORKER_NAME},
+    )
+
+    return run
+
+
+@app.get("/queue/stats")
+def queue_stats():
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                stats = get_queue_stats(cursor)
+
+        return {
+            "service": "hirepilot-ai-agent-worker",
+            "worker_name": WORKER_NAME,
+            "status": "online",
+            "queue": stats,
+        }
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.post("/queue/claim-next")
+def queue_claim_next():
+    try:
+        with get_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                run = claim_next_queued_run(cursor)
+                conn.commit()
+
+        return {
+            "message": "Queued run claimed" if run else "No queued run available",
+            "claimed": bool(run),
+            "agent_run": serialize_row(run),
+        }
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error))
+
+
 @app.get("/health")
 def health():
     try:
@@ -222,6 +391,18 @@ def simulate_external_apply(payload: ExternalApplyPayload):
     try:
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
+                cursor.execute(
+                    """
+                    UPDATE ai_agent_runs
+                    SET locked_by = %s,
+                        locked_at = COALESCE(locked_at, CURRENT_TIMESTAMP),
+                        last_heartbeat_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE agent_run_id = %s
+                    """,
+                    (WORKER_NAME, payload.agent_run_id),
+                )
+
                 update_run(
                     cursor,
                     payload.agent_run_id,
