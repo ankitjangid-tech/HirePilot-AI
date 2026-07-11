@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import json
 import os
+import subprocess
+import sys
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -23,6 +25,148 @@ app = FastAPI(
 )
 
 WORKER_NAME = os.getenv("AI_WORKER_NAME", "python_external_apply_worker_stub")
+
+
+
+def get_playwright_status() -> Dict[str, Any]:
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F401
+
+        return {
+            "available": True,
+            "mode": "safe_local_browser_automation",
+            "message": "Playwright package is installed. Run browser smoke test to verify Chromium browser installation.",
+        }
+    except Exception as error:
+        return {
+            "available": False,
+            "mode": "not_available",
+            "message": "Playwright package is not available in the selected Python environment.",
+            "error": str(error),
+            "install_hint": "pip install -r requirements.txt && python -m playwright install chromium",
+        }
+
+
+def run_playwright_safe_form_fill() -> Dict[str, Any]:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as error:
+        raise RuntimeError(
+            "Playwright is not installed in this Python environment. "
+            "Run: pip install -r requirements.txt && python -m playwright install chromium"
+        ) from error
+
+    html = """
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset='utf-8' />
+        <title>HirePilot Safe Dummy Portal</title>
+      </head>
+      <body>
+        <h1>HirePilot Safe Dummy Job Portal</h1>
+        <form id='application-form'>
+          <label>Full Name <input id='full_name' name='full_name' /></label>
+          <label>Email <input id='email' name='email' /></label>
+          <label>Role <input id='role' name='role' /></label>
+          <label>Experience <input id='experience' name='experience' /></label>
+          <label>Skills <textarea id='skills' name='skills'></textarea></label>
+          <label>Resume <input id='resume_filename' name='resume_filename' /></label>
+          <button id='submit-application' type='submit'>Submit Application</button>
+        </form>
+        <div id='result'></div>
+        <script>
+          document.getElementById('application-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+            document.getElementById('result').textContent = 'Dummy application submitted safely';
+          });
+        </script>
+      </body>
+    </html>
+    """
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_content(html)
+            page.fill("#full_name", "HirePilot Test Candidate")
+            page.fill("#email", "candidate@example.com")
+            page.fill("#role", "Junior Full Stack Developer")
+            page.fill("#experience", "0 years")
+            page.fill("#skills", "Python, SQL, React, JavaScript, HTML, CSS")
+            page.fill("#resume_filename", "candidate-resume.pdf")
+            page.click("#submit-application")
+            result_text = page.locator("#result").inner_text(timeout=3000)
+            browser.close()
+    except Exception as error:
+        message = str(error)
+        if "Executable doesn't exist" in message or "playwright install" in message.lower():
+            raise RuntimeError(
+                "Playwright browser binaries are missing. Run: python -m playwright install chromium"
+            ) from error
+        raise
+
+    return {
+        "success": result_text == "Dummy application submitted safely",
+        "result_text": result_text,
+        "portal": "safe_dummy_local_page",
+        "browser": "chromium_headless",
+    }
+
+
+def run_playwright_safe_form_fill_isolated() -> Dict[str, Any]:
+    """
+    Run the Playwright smoke test in a separate Python process.
+
+    On Windows, Playwright can raise NotImplementedError when Chromium is
+    launched from a FastAPI/Uvicorn worker thread. Running the browser smoke
+    test in an isolated Python process keeps the browser launch in that child
+    process main thread while preserving the same venv and project code.
+    """
+    timeout_ms = int(os.getenv("AI_BROWSER_TEST_TIMEOUT_MS", "30000"))
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json; "
+            "from main import run_playwright_safe_form_fill; "
+            "print(json.dumps(run_playwright_safe_form_fill()))"
+        ),
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_ms / 1000, 5),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Playwright safe browser smoke test timed out. "
+            "Try increasing AI_BROWSER_TEST_TIMEOUT_MS in backend/.env."
+        ) from error
+
+    if completed.returncode != 0:
+        error_output = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            error_output
+            or "Isolated Playwright browser process failed without output."
+        )
+
+    output = completed.stdout.strip()
+    if not output:
+        raise RuntimeError("Isolated Playwright browser process returned no output.")
+
+    last_line = output.splitlines()[-1]
+    try:
+        return json.loads(last_line)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"Unable to parse Playwright smoke test output: {last_line}"
+        ) from error
 
 
 def db_config() -> Dict[str, Any]:
@@ -195,6 +339,12 @@ class ExternalApplyPayload(BaseModel):
     experience_years: Optional[int] = None
     force_retry: bool = False
     retry_source_agent_run_id: Optional[int] = None
+
+
+class BrowserSmokePayload(BaseModel):
+    agent_run_id: int
+    candidate_id: int
+    requested_by_user_id: Optional[int] = None
 
 
 def split_skills(skills: Optional[str]) -> List[str]:
@@ -383,7 +533,33 @@ def health():
         "status": "online",
         "database_connected": database_connected,
         "mode": "safe_simulation",
+        "browser_automation": get_playwright_status(),
     }
+
+
+@app.post("/browser/smoke-test")
+def browser_smoke_test(payload: BrowserSmokePayload):
+    """
+    Safe browser smoke test endpoint.
+
+    This endpoint intentionally verifies Playwright/Chromium only and returns
+    the browser result to the Node backend. The backend owns timeline writes
+    for this smoke test, so a PostgreSQL write issue inside the worker cannot
+    hide a successful browser launch behind a generic 500 response.
+    """
+    try:
+        result = run_playwright_safe_form_fill_isolated()
+
+        return {
+            "message": "Playwright safe browser automation smoke test completed",
+            "success": True,
+            "agent_run_id": payload.agent_run_id,
+            "candidate_id": payload.candidate_id,
+            "result": result,
+        }
+    except Exception as error:
+        error_message = str(error) or repr(error) or "Unknown Playwright smoke test error"
+        raise HTTPException(status_code=500, detail=error_message)
 
 
 @app.post("/simulate-external-apply")

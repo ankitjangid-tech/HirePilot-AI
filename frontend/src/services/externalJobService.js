@@ -65,3 +65,11 @@ export const cancelExternalAgentRun = (token, agentRunId) => {
     authHeader(token)
   );
 };
+
+export const runSafeBrowserSmokeTest = (token) => {
+  return API.post(
+    "/external-jobs/browser/smoke-test",
+    {},
+    authHeader(token)
+  );
+};

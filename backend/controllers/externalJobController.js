@@ -1702,6 +1702,200 @@ const completeExternalApplication = async (req, res) => {
   }
 };
 
+
+const runSafeBrowserSmokeTest = async (req, res) => {
+  let agentRunId = null;
+
+  try {
+    const candidate = await getCandidateForUser(req.user.user_id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
+
+    agentRunId = await createAgentRun({
+      candidate_id: candidate.candidate_id,
+      external_job_id: null,
+      requested_by_user_id: req.user.user_id,
+      run_type: "safe_browser_smoke_test",
+      run_status: "running",
+      agent_name: "playwright_safe_browser_worker",
+      source_platform: "Safe Local Dummy Portal",
+      current_step: "browser_test_requested",
+      metadata: {
+        automation_mode: "safe_dummy_local_browser",
+        real_external_submission: false,
+        purpose: "Playwright foundation verification",
+        job_title: "Safe Browser Automation Test",
+        company_name: "HirePilot Safe Dummy Portal",
+      },
+    });
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "browser_test_requested",
+      step_status: "running",
+      step_order: 0,
+      details:
+        "Candidate requested a safe Playwright browser automation smoke test.",
+      metadata: {
+        worker_url: workerBaseUrl(),
+        real_external_submission: false,
+      },
+    });
+
+    if (!isWorkerEnabled()) {
+      await finishAgentRun({
+        agent_run_id: agentRunId,
+        run_status: "failed",
+        current_step: "browser_automation_failed",
+        summary: "Playwright smoke test could not start because Python worker is disabled.",
+        error_message: "Python worker is disabled",
+        metadata: { worker_enabled: false },
+      });
+
+      return res.status(400).json({
+        error: "Python worker is disabled. Enable AI_WORKER_ENABLED=true first.",
+        agent_run_id: agentRunId,
+      });
+    }
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "browser_automation_started",
+      step_status: "completed",
+      step_order: 1,
+      details: "Backend asked Python worker to start safe Playwright browser automation.",
+      metadata: {
+        worker_url: workerBaseUrl(),
+        automation_mode: "safe_dummy_local_browser",
+      },
+    });
+
+    const response = await axios.post(
+      `${workerBaseUrl()}/browser/smoke-test`,
+      {
+        agent_run_id: agentRunId,
+        candidate_id: candidate.candidate_id,
+        requested_by_user_id: req.user.user_id,
+      },
+      {
+        timeout: Number(process.env.AI_BROWSER_TEST_TIMEOUT_MS || 30000),
+      }
+    );
+
+    const result = response.data?.result || {};
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "dummy_portal_opened",
+      step_status: "completed",
+      step_order: 2,
+      details: "Playwright opened a safe local dummy job application page.",
+      metadata: {
+        portal: result.portal || "safe_dummy_local_page",
+        real_external_submission: false,
+      },
+    });
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "application_form_filled",
+      step_status: "completed",
+      step_order: 3,
+      details: "Playwright filled a dummy external application form with safe test data.",
+      metadata: {
+        contains_real_submission: false,
+      },
+    });
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "resume_upload_simulated",
+      step_status: "completed",
+      step_order: 4,
+      details: "Resume upload was simulated with a filename only. No real external portal upload occurred.",
+      metadata: {
+        resume_filename: "candidate-resume.pdf",
+      },
+    });
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "dummy_portal_submitted",
+      step_status: "completed",
+      step_order: 5,
+      details: "Playwright clicked submit on the safe dummy portal only.",
+      metadata: {
+        result_text: result.result_text || null,
+      },
+    });
+
+    await finishAgentRun({
+      agent_run_id: agentRunId,
+      run_status: "completed",
+      current_step: "browser_automation_completed",
+      summary: "Playwright safe browser automation smoke test completed successfully.",
+      metadata: {
+        worker_url: workerBaseUrl(),
+        automation_mode: "safe_dummy_local_browser",
+        result,
+      },
+    });
+
+    return res.status(200).json({
+      message: "Safe Playwright browser automation test completed",
+      agent_run_id: agentRunId,
+      result: response.data,
+    });
+  } catch (error) {
+    const workerError =
+      error.response?.data?.detail ||
+      error.response?.data?.error ||
+      error.response?.data ||
+      error.message ||
+      "Safe Playwright browser automation test failed";
+
+    console.log("SAFE BROWSER SMOKE TEST ERROR:", workerError);
+
+    await addAgentRunStep({
+      agent_run_id: agentRunId,
+      step_name: "browser_test_request_failed",
+      step_status: "failed",
+      step_order: 100,
+      details: "Backend could not complete the safe browser smoke test request.",
+      metadata: {
+        error: workerError,
+      },
+    });
+
+    await finishAgentRun({
+      agent_run_id: agentRunId,
+      run_status: "failed",
+      current_step: "browser_automation_failed",
+      summary: "Safe Playwright browser automation test failed.",
+      error_message:
+        typeof workerError === "string"
+          ? workerError
+          : JSON.stringify(workerError),
+      metadata: {
+        worker_url: workerBaseUrl(),
+        error: workerError,
+      },
+    });
+
+    return res.status(500).json({
+      error:
+        typeof workerError === "string"
+          ? workerError
+          : "Safe Playwright browser automation test failed",
+      agent_run_id: agentRunId,
+    });
+  }
+};
+
 module.exports = {
   getMatchedExternalJobs,
   getMyExternalApplications,
@@ -1712,4 +1906,5 @@ module.exports = {
   retryExternalAgentRun,
   cancelExternalAgentRun,
   completeExternalApplication,
+  runSafeBrowserSmokeTest,
 };

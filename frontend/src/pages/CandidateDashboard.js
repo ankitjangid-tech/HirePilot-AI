@@ -30,6 +30,7 @@ import {
   retryExternalAgentRun,
   cancelExternalAgentRun,
   completeExternalApplication,
+  runSafeBrowserSmokeTest,
 } from "../services/externalJobService";
 
 const emptyProfileForm = {
@@ -94,6 +95,7 @@ const agentRunTypeLabels = {
   external_apply: "External Apply",
   external_apply_retry: "External Apply Retry",
   manual_completion_confirmation: "Manual Completion",
+  safe_browser_smoke_test: "Safe Browser Test",
 };
 
 const agentStepLabels = {
@@ -119,6 +121,15 @@ const agentStepLabels = {
   candidate_confirmation_received: "Candidate confirmation received",
   external_status_updated: "External status updated",
   completion_skipped: "Completion skipped",
+  browser_test_requested: "Browser test requested",
+  browser_automation_started: "Browser automation started",
+  dummy_portal_opened: "Dummy portal opened",
+  application_form_filled: "Application form filled",
+  resume_upload_simulated: "Resume upload simulated",
+  dummy_portal_submitted: "Dummy portal submitted",
+  browser_automation_completed: "Browser automation completed",
+  browser_automation_failed: "Browser automation failed",
+  browser_test_request_failed: "Browser test request failed",
 };
 
 const actionTypeLabels = {
@@ -190,26 +201,18 @@ const notificationClass = (type) =>
 
 const displayValue = (value) => value || "Not added";
 
-const isFinalExternalApplicationStatus = (status) =>
-  ["Applied", "Cancelled", "Failed"].includes(status);
-
-const isResolvedManualRun = (run) =>
-  run?.run_status === "needs_manual_action" &&
-  isFinalExternalApplicationStatus(run?.external_application_status);
-
 const canRetryAgentRun = (run) =>
-  ["failed", "skipped", "cancelled"].includes(run?.run_status) ||
-  (run?.run_status === "needs_manual_action" && !isResolvedManualRun(run));
+  ["failed", "needs_manual_action", "skipped", "cancelled"].includes(
+    run?.run_status
+  );
 
 const canCancelAgentRun = (run) =>
-  ["queued", "running"].includes(run?.run_status) ||
-  (run?.run_status === "needs_manual_action" && !isResolvedManualRun(run));
+  ["queued", "running", "needs_manual_action"].includes(run?.run_status);
 
 const isProcessingAgentRun = (run) =>
   ["queued", "running"].includes(run?.run_status);
 
-const isWaitingAgentRun = (run) =>
-  run?.run_status === "needs_manual_action" && !isResolvedManualRun(run);
+const isWaitingAgentRun = (run) => run?.run_status === "needs_manual_action";
 
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
@@ -242,6 +245,7 @@ function CandidateDashboard() {
   const [completingExternalApplicationId, setCompletingExternalApplicationId] = useState(null);
   const [agentRunActionId, setAgentRunActionId] = useState(null);
   const [agentRefreshLoading, setAgentRefreshLoading] = useState(false);
+  const [browserTestLoading, setBrowserTestLoading] = useState(false);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
@@ -663,6 +667,39 @@ function CandidateDashboard() {
       setExternalMessage(error.response?.data?.error || "Unable to cancel agent run");
     } finally {
       setAgentRunActionId(null);
+    }
+  };
+
+
+  const handleRunSafeBrowserTest = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setBrowserTestLoading(true);
+      setExternalMessage("Running safe Playwright browser automation test...");
+
+      const response = await runSafeBrowserSmokeTest(token);
+
+      setExternalMessage(
+        response.data.message || "Safe browser automation test completed"
+      );
+      await fetchExternalAgentData({ silent: true });
+    } catch (error) {
+      console.log(
+        "SAFE BROWSER TEST ERROR:",
+        error.response?.data || error.message
+      );
+      setExternalMessage(
+        error.response?.data?.error || "Safe browser automation test failed"
+      );
+      await fetchExternalAgentData({ silent: true });
+    } finally {
+      setBrowserTestLoading(false);
     }
   };
 
@@ -1428,6 +1465,23 @@ function CandidateDashboard() {
               </p>
             )}
 
+            {externalWorkerHealth?.worker?.browser_automation && (
+              <p className="worker-status-line">
+                Browser automation: {" "}
+                <span
+                  className={
+                    externalWorkerHealth.worker.browser_automation.available
+                      ? "worker-status online"
+                      : "worker-status offline"
+                  }
+                >
+                  {externalWorkerHealth.worker.browser_automation.available
+                    ? "Playwright package ready"
+                    : "Playwright not ready"}
+                </span>
+              </p>
+            )}
+
             <div className="live-progress-row">
               <span
                 className={
@@ -1451,6 +1505,14 @@ function CandidateDashboard() {
                 disabled={agentRefreshLoading}
               >
                 {agentRefreshLoading ? "Refreshing..." : "Refresh Timeline"}
+              </button>
+
+              <button
+                className="primary-button small-button"
+                onClick={handleRunSafeBrowserTest}
+                disabled={browserTestLoading || !externalWorkerHealth?.online}
+              >
+                {browserTestLoading ? "Testing browser..." : "Run Safe Browser Test"}
               </button>
 
               {lastAgentRefreshAt && (
@@ -1479,10 +1541,10 @@ function CandidateDashboard() {
                     <span className={statusClass(run.run_status)}>
                       {agentRunStatusLabels[run.run_status] || run.run_status}
                     </span>
-                    <h3>{run.job_title || "External job"}</h3>
+                    <h3>{run.job_title || run.metadata?.job_title || (run.run_type === "safe_browser_smoke_test" ? "Safe Browser Automation Test" : "External job")}</h3>
                     <p>
                       {agentRunTypeLabels[run.run_type] || run.run_type} • {" "}
-                      {run.company_name || "External company"}
+                      {run.company_name || run.metadata?.company_name || (run.run_type === "safe_browser_smoke_test" ? "HirePilot Safe Dummy Portal" : "External company")}
                       {run.source_platform ? ` • ${run.source_platform}` : ""}
                     </p>
                   </div>

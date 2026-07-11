@@ -15,6 +15,7 @@ const {
   retryExternalAgentRun,
   cancelExternalAgentRun,
   completeExternalApplication,
+  runSafeBrowserSmokeTest,
 } = require("../controllers/externalJobController");
 
 router.get(
@@ -50,6 +51,13 @@ router.get(
   verifyToken,
   authorizeRole("candidate"),
   getExternalWorkerHealth
+);
+
+router.post(
+  "/browser/smoke-test",
+  verifyToken,
+  authorizeRole("candidate"),
+  runSafeBrowserSmokeTest
 );
 
 router.post(
