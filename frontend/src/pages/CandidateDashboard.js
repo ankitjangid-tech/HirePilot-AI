@@ -113,6 +113,7 @@ const agentStepLabels = {
   skipped_low_match: "Skipped: low match",
   worker_received: "Python worker received task",
   worker_simulated_submit: "Worker simulated submit",
+  safe_browser_apply_started: "Safe browser apply started",
   worker_unavailable_fallback: "Worker fallback used",
   worker_failed: "Worker failed",
   retry_existing_application: "Retry existing application",
@@ -1235,7 +1236,9 @@ function CandidateDashboard() {
                 <span>{job.location || "Location not listed"}</span>
                 <span>{job.salary || "Salary not listed"}</span>
                 <span>
-                  {job.apply_mode === "easy_apply"
+                  {job.apply_mode === "safe_browser_apply"
+                    ? "Safe browser apply"
+                    : job.apply_mode === "easy_apply"
                     ? "Auto-apply possible"
                     : "Manual questions likely"}
                 </span>

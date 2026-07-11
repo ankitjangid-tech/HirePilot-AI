@@ -47,7 +47,15 @@ def get_playwright_status() -> Dict[str, Any]:
         }
 
 
-def run_playwright_safe_form_fill() -> Dict[str, Any]:
+def run_playwright_safe_form_fill(
+    full_name: str = "HirePilot Test Candidate",
+    email: str = "candidate@example.com",
+    role: str = "Junior Full Stack Developer",
+    experience: str = "0 years",
+    skills: str = "Python, SQL, React, JavaScript, HTML, CSS",
+    resume_filename: str = "candidate-resume.pdf",
+    company_name: str = "HirePilot Safe Dummy Portal",
+) -> Dict[str, Any]:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as error:
@@ -65,9 +73,11 @@ def run_playwright_safe_form_fill() -> Dict[str, Any]:
       </head>
       <body>
         <h1>HirePilot Safe Dummy Job Portal</h1>
+        <p id='portal-note'>This is a local dummy page. No real external portal submission occurs.</p>
         <form id='application-form'>
           <label>Full Name <input id='full_name' name='full_name' /></label>
           <label>Email <input id='email' name='email' /></label>
+          <label>Company <input id='company_name' name='company_name' /></label>
           <label>Role <input id='role' name='role' /></label>
           <label>Experience <input id='experience' name='experience' /></label>
           <label>Skills <textarea id='skills' name='skills'></textarea></label>
@@ -90,12 +100,13 @@ def run_playwright_safe_form_fill() -> Dict[str, Any]:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page()
             page.set_content(html)
-            page.fill("#full_name", "HirePilot Test Candidate")
-            page.fill("#email", "candidate@example.com")
-            page.fill("#role", "Junior Full Stack Developer")
-            page.fill("#experience", "0 years")
-            page.fill("#skills", "Python, SQL, React, JavaScript, HTML, CSS")
-            page.fill("#resume_filename", "candidate-resume.pdf")
+            page.fill("#full_name", full_name or "HirePilot Test Candidate")
+            page.fill("#email", email or "candidate@example.com")
+            page.fill("#company_name", company_name or "HirePilot Safe Dummy Portal")
+            page.fill("#role", role or "External Job Candidate")
+            page.fill("#experience", experience or "0 years")
+            page.fill("#skills", skills or "Profile skills not provided")
+            page.fill("#resume_filename", resume_filename or "candidate-resume.pdf")
             page.click("#submit-application")
             result_text = page.locator("#result").inner_text(timeout=3000)
             browser.close()
@@ -112,8 +123,10 @@ def run_playwright_safe_form_fill() -> Dict[str, Any]:
         "result_text": result_text,
         "portal": "safe_dummy_local_page",
         "browser": "chromium_headless",
+        "company_name": company_name,
+        "role": role,
+        "real_external_submission": False,
     }
-
 
 def run_playwright_safe_form_fill_isolated() -> Dict[str, Any]:
     """
@@ -168,6 +181,80 @@ def run_playwright_safe_form_fill_isolated() -> Dict[str, Any]:
             f"Unable to parse Playwright smoke test output: {last_line}"
         ) from error
 
+
+
+def run_playwright_external_apply_isolated(
+    *,
+    job_title: str,
+    company_name: str,
+    experience_years: Optional[int],
+    matched_skills: List[str],
+) -> Dict[str, Any]:
+    """
+    Run the safe dummy external apply browser flow in a child process.
+
+    This keeps Windows + FastAPI/Uvicorn stable and uses the same working path
+    as the browser smoke test. No real portal, login, CAPTCHA, or resume upload
+    is performed.
+    """
+    timeout_ms = int(os.getenv("AI_BROWSER_TEST_TIMEOUT_MS", "30000"))
+    safe_payload = {
+        "full_name": "HirePilot Candidate",
+        "email": "candidate@example.com",
+        "role": job_title or "External Job Candidate",
+        "experience": f"{experience_years or 0} years",
+        "skills": ", ".join(matched_skills or []) or "Profile skills not provided",
+        "resume_filename": "candidate-resume.pdf",
+        "company_name": company_name or "HirePilot Safe Dummy Portal",
+    }
+
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import json, os; "
+            "from main import run_playwright_safe_form_fill; "
+            "payload=json.loads(os.environ.get('HIREPILOT_SAFE_BROWSER_PAYLOAD', '{}')); "
+            "print(json.dumps(run_playwright_safe_form_fill(**payload)))"
+        ),
+    ]
+
+    child_env = os.environ.copy()
+    child_env["HIREPILOT_SAFE_BROWSER_PAYLOAD"] = json.dumps(safe_payload)
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(BASE_DIR),
+            env=child_env,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_ms / 1000, 5),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Safe dummy external apply browser flow timed out. "
+            "Try increasing AI_BROWSER_TEST_TIMEOUT_MS in backend/.env."
+        ) from error
+
+    if completed.returncode != 0:
+        error_output = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            error_output
+            or "Safe dummy external apply browser process failed without output."
+        )
+
+    output = completed.stdout.strip()
+    if not output:
+        raise RuntimeError("Safe dummy external apply browser process returned no output.")
+
+    last_line = output.splitlines()[-1]
+    try:
+        return json.loads(last_line)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"Unable to parse safe dummy external apply output: {last_line}"
+        ) from error
 
 def db_config() -> Dict[str, Any]:
     return {
@@ -775,11 +862,16 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                             "used_worker": True,
                         }
 
-                can_auto_complete = payload.apply_mode == "easy_apply" and payload.match_score >= 60
+                safe_browser_apply_modes = {"easy_apply", "safe_browser_apply"}
+                can_auto_complete = (
+                    payload.apply_mode in safe_browser_apply_modes
+                    and payload.match_score >= 60
+                )
                 application_status = "Applied" if can_auto_complete else "Pending"
                 failure_reason = None if can_auto_complete else (
                     "Manual action needed: external portal may require questions, login, CAPTCHA, or candidate review."
                 )
+                browser_result: Optional[Dict[str, Any]] = None
 
                 add_step(
                     cursor,
@@ -790,9 +882,144 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     metadata={
                         "apply_mode": payload.apply_mode,
                         "can_auto_complete": can_auto_complete,
-                        "worker_mode": "safe_simulation",
+                        "worker_mode": "safe_browser_apply" if can_auto_complete else "safe_simulation",
+                        "real_external_submission": False,
                     },
                 )
+
+                if can_auto_complete:
+                    add_step(
+                        cursor,
+                        payload.agent_run_id,
+                        "browser_automation_started",
+                        6,
+                        "Python worker started safe dummy browser automation for this external apply.",
+                        step_status="running",
+                        metadata={
+                            "automation_mode": "safe_dummy_external_apply",
+                            "real_external_submission": False,
+                        },
+                    )
+                    update_run(
+                        cursor,
+                        payload.agent_run_id,
+                        run_status="running",
+                        current_step="safe_browser_apply_started",
+                        summary="Python worker started safe dummy browser automation for external apply.",
+                        metadata={
+                            "apply_mode": payload.apply_mode,
+                            "automation_mode": "safe_dummy_external_apply",
+                            "real_external_submission": False,
+                        },
+                    )
+                    conn.commit()
+
+                    try:
+                        browser_result = run_playwright_external_apply_isolated(
+                            job_title=payload.job_title,
+                            company_name=payload.company_name,
+                            experience_years=payload.experience_years,
+                            matched_skills=payload.matched_skills,
+                        )
+                    except Exception as browser_error:
+                        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as failure_cursor:
+                            add_step(
+                                failure_cursor,
+                                payload.agent_run_id,
+                                "browser_automation_failed",
+                                7,
+                                "Safe dummy browser automation failed before external application could be marked Applied.",
+                                step_status="failed",
+                                metadata={
+                                    "error": str(browser_error),
+                                    "real_external_submission": False,
+                                },
+                            )
+                            log_attempt(
+                                failure_cursor,
+                                payload.candidate_id,
+                                payload.external_job_id,
+                                None,
+                                "external_apply_retry" if payload.force_retry else "external_apply_attempt",
+                                "failed",
+                                payload.source_platform,
+                                str(browser_error),
+                                {
+                                    "match_score": payload.match_score,
+                                    "apply_mode": payload.apply_mode,
+                                    "worker_name": WORKER_NAME,
+                                    "agent_run_id": payload.agent_run_id,
+                                    "automation_mode": "safe_dummy_external_apply",
+                                    "real_external_submission": False,
+                                },
+                            )
+                            update_run(
+                                failure_cursor,
+                                payload.agent_run_id,
+                                run_status="failed",
+                                current_step="browser_automation_failed",
+                                summary="Safe dummy browser automation failed during external apply.",
+                                error_message=str(browser_error),
+                                metadata={
+                                    "worker_name": WORKER_NAME,
+                                    "automation_mode": "safe_dummy_external_apply",
+                                    "real_external_submission": False,
+                                },
+                                completed=True,
+                            )
+                            conn.commit()
+
+                        return {
+                            "message": "Safe dummy browser automation failed",
+                            "outcome": "browser_automation_failed",
+                            "run_status": "failed",
+                            "used_worker": True,
+                        }
+
+                    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as browser_cursor:
+                        add_step(
+                            browser_cursor,
+                            payload.agent_run_id,
+                            "dummy_portal_opened",
+                            7,
+                            "Playwright opened the safe dummy external job portal.",
+                            metadata={
+                                "portal": browser_result.get("portal"),
+                                "real_external_submission": False,
+                            },
+                        )
+                        add_step(
+                            browser_cursor,
+                            payload.agent_run_id,
+                            "application_form_filled",
+                            8,
+                            "Playwright filled the dummy external application form with safe test data.",
+                            metadata={
+                                "role": payload.job_title,
+                                "company_name": payload.company_name,
+                                "matched_skills": payload.matched_skills,
+                                "contains_real_submission": False,
+                            },
+                        )
+                        add_step(
+                            browser_cursor,
+                            payload.agent_run_id,
+                            "resume_upload_simulated",
+                            9,
+                            "Resume upload was simulated with a filename only. No real external portal upload occurred.",
+                            metadata={"resume_filename": "candidate-resume.pdf"},
+                        )
+                        add_step(
+                            browser_cursor,
+                            payload.agent_run_id,
+                            "dummy_portal_submitted",
+                            10,
+                            "Playwright clicked submit on the safe dummy external portal only.",
+                            metadata={
+                                "result_text": browser_result.get("result_text"),
+                                "real_external_submission": False,
+                            },
+                        )
 
                 if retry_existing_application:
                     cursor.execute(
@@ -838,11 +1065,12 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     cursor,
                     payload.agent_run_id,
                     "application_record_created",
-                    6,
+                    11 if can_auto_complete else 6,
                     f"External application record created with status {application_status}.",
                     metadata={
                         "external_application_id": application["external_application_id"],
                         "application_status": application_status,
+                        "automation_mode": "safe_dummy_external_apply" if can_auto_complete else "manual_fallback",
                     },
                 )
 
@@ -850,10 +1078,14 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     add_step(
                         cursor,
                         payload.agent_run_id,
-                        "worker_simulated_submit",
-                        7,
-                        "Python worker simulated a safe easy-apply submission.",
-                        metadata={"worker_name": WORKER_NAME},
+                        "browser_automation_completed",
+                        12,
+                        "Safe dummy browser automation completed and external application was marked Applied.",
+                        metadata={
+                            "worker_name": WORKER_NAME,
+                            "browser_result": browser_result or {},
+                            "real_external_submission": False,
+                        },
                     )
 
                 log_attempt(
@@ -872,12 +1104,14 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                         "apply_mode": payload.apply_mode,
                         "worker_name": WORKER_NAME,
                         "agent_run_id": payload.agent_run_id,
+                        "automation_mode": "safe_dummy_external_apply" if can_auto_complete else "manual_fallback",
+                        "real_external_submission": False,
                     },
                 )
 
                 run_status = "completed" if can_auto_complete else "needs_manual_action"
                 summary = (
-                    "Python worker simulated external easy apply successfully."
+                    "Python worker completed safe dummy browser external apply."
                     if can_auto_complete
                     else "Python worker determined this external application needs manual completion."
                 )
@@ -886,7 +1120,7 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     cursor,
                     payload.agent_run_id,
                     run_status=run_status,
-                    current_step="completed" if can_auto_complete else "waiting_for_candidate",
+                    current_step="browser_automation_completed" if can_auto_complete else "waiting_for_candidate",
                     summary=summary,
                     external_application_id=application["external_application_id"],
                     metadata={
@@ -898,6 +1132,9 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                         "used_python_worker": True,
                         "force_retry": payload.force_retry,
                         "retry_source_agent_run_id": payload.retry_source_agent_run_id,
+                        "automation_mode": "safe_dummy_external_apply" if can_auto_complete else "manual_fallback",
+                        "browser_result": browser_result or {},
+                        "real_external_submission": False,
                     },
                     completed=True,
                 )
@@ -906,7 +1143,7 @@ def simulate_external_apply(payload: ExternalApplyPayload):
 
                 return {
                     "message": (
-                        "External application submitted by Python worker simulation"
+                        "External application completed through safe dummy browser automation"
                         if can_auto_complete
                         else "External application needs manual completion"
                     ),
@@ -914,6 +1151,7 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     "run_status": run_status,
                     "externalApplication": serialize_row(application),
                     "used_worker": True,
+                    "browser_automation_used": can_auto_complete,
                 }
     except Exception as error:
         try:

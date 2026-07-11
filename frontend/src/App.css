@@ -1383,3 +1383,99 @@ button:disabled {
   background: #e5e7eb;
   color: #374151;
 }
+
+
+
+
+
+
+
+
+/* Fix: prevent agent timeline / external cards from breaking dashboard width */
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.dashboard-shell,
+.dashboard-grid,
+.panel,
+.stack-list,
+.item-card,
+.list-card,
+.external-job-card,
+.external-application-card,
+.orchestration-panel,
+.agent-run-list,
+.agent-run-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.section-heading,
+.agent-run-header,
+.external-actions-row,
+.live-progress-row,
+.agent-run-controls {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.section-heading > div,
+.agent-run-header > div,
+.agent-step > div,
+.external-application-card > div,
+.list-card > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-run-card,
+.agent-run-card *,
+.agent-step,
+.agent-step *,
+.error-text,
+.helper-text,
+.muted,
+.list-card p,
+.external-job-card p,
+.external-application-card p {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.error-text {
+  white-space: pre-wrap;
+  max-width: 100%;
+}
+
+.agent-run-meta {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.live-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-run-controls {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .agent-run-header {
+    flex-direction: column;
+  }
+
+  .agent-run-meta {
+    text-align: left;
+  }
+}
