@@ -1415,6 +1415,16 @@ body,
   max-width: 100%;
 }
 
+.dashboard-grid,
+.panel,
+.stack-list,
+.external-application-card,
+.orchestration-panel,
+.agent-run-list,
+.agent-run-card {
+  width: 100%;
+}
+
 .section-heading,
 .agent-run-header,
 .external-actions-row,
@@ -1430,6 +1440,19 @@ body,
 .agent-step > div,
 .external-application-card > div,
 .list-card > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-step-timeline,
+.external-application-card .external-actions-row {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.agent-step {
+  grid-template-columns: auto minmax(0, 1fr);
   min-width: 0;
   max-width: 100%;
 }
@@ -1451,6 +1474,14 @@ body,
 .error-text {
   white-space: pre-wrap;
   max-width: 100%;
+}
+
+.agent-run-card .status-badge,
+.agent-step .status-badge,
+.external-application-card .status-badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .agent-run-meta {
