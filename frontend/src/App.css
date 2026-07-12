@@ -1497,6 +1497,18 @@ button:disabled {
   font-weight: 800;
 }
 
+.development-only-button {
+  border-style: dashed;
+  border-color: #d97706;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.development-only-button:hover:not(:disabled) {
+  border-color: #b45309;
+  background: #fef3c7;
+}
+
 .agent-run-card.active-run {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.09);

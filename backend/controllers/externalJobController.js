@@ -1920,6 +1920,68 @@ const runSafeBrowserSmokeTest = async (req, res) => {
   }
 };
 
+const resetSafeDummyExternalApplication = async (req, res) => {
+  const nodeEnvironment = String(
+    process.env.NODE_ENV || "development"
+  ).toLowerCase();
+
+  if (!["development", "test"].includes(nodeEnvironment)) {
+    return res.status(404).json({
+      error: "Development reset endpoint is not available",
+    });
+  }
+
+  try {
+    const candidate = await getCandidateForUser(req.user.user_id);
+
+    if (!candidate) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
+
+    const result = await pool.query(
+      `DELETE FROM external_applications ea
+       USING external_jobs ej
+       WHERE ea.external_job_id = ej.external_job_id
+       AND ea.candidate_id = $1
+       AND ej.job_title = $2
+       AND ej.apply_mode = $3
+       AND (
+         ej.source_platform = $4
+         OR ej.source_platform IS NULL
+         OR BTRIM(ej.source_platform) = ''
+       )
+       RETURNING
+         ea.external_application_id,
+         ea.external_job_id,
+         ea.application_status`,
+      [
+        candidate.candidate_id,
+        "Safe Dummy Frontend Engineer",
+        "safe_browser_apply",
+        "HirePilot Safe Dummy Portal",
+      ]
+    );
+
+    const resetApplication = result.rows[0] || null;
+
+    return res.status(200).json({
+      message: resetApplication
+        ? "Safe dummy external application reset. You can apply again."
+        : "Safe dummy external application is already available to apply.",
+      reset: Boolean(resetApplication),
+      external_job_id: resetApplication?.external_job_id || null,
+    });
+  } catch (error) {
+    console.log("SAFE DUMMY EXTERNAL APPLY RESET ERROR:", error.message);
+
+    return res.status(500).json({
+      error: "Unable to reset safe dummy external application",
+    });
+  }
+};
+
 module.exports = {
   getMatchedExternalJobs,
   getMyExternalApplications,
@@ -1931,4 +1993,5 @@ module.exports = {
   cancelExternalAgentRun,
   completeExternalApplication,
   runSafeBrowserSmokeTest,
+  resetSafeDummyExternalApplication,
 };

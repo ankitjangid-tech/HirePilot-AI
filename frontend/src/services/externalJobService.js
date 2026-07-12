@@ -73,3 +73,10 @@ export const runSafeBrowserSmokeTest = (token) => {
     authHeader(token)
   );
 };
+
+export const resetSafeDummyExternalApplication = (token) => {
+  return API.delete(
+    "/external-jobs/safe-dummy/reset",
+    authHeader(token)
+  );
+};

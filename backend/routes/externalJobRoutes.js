@@ -16,6 +16,7 @@ const {
   cancelExternalAgentRun,
   completeExternalApplication,
   runSafeBrowserSmokeTest,
+  resetSafeDummyExternalApplication,
 } = require("../controllers/externalJobController");
 
 router.get(
@@ -58,6 +59,13 @@ router.post(
   verifyToken,
   authorizeRole("candidate"),
   runSafeBrowserSmokeTest
+);
+
+router.delete(
+  "/safe-dummy/reset",
+  verifyToken,
+  authorizeRole("candidate"),
+  resetSafeDummyExternalApplication
 );
 
 router.post(
