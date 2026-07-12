@@ -1187,6 +1187,68 @@ button:disabled {
   gap: 14px;
 }
 
+.agent-run-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.agent-run-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.agent-run-filter-chip:hover {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.agent-run-filter-chip:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.2);
+  outline-offset: 2px;
+}
+
+.agent-run-filter-chip.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.agent-run-filter-chip span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 11px;
+}
+
+.agent-run-filter-chip.active span {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.agent-run-filter-empty {
+  margin-top: 0;
+}
+
 .agent-run-card {
   padding: 16px;
   border: 1px solid var(--line);
@@ -1268,7 +1330,73 @@ button:disabled {
   color: var(--danger);
 }
 
+.agent-run-error {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: var(--danger-bg);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-run-error-summary {
+  margin: 0;
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.technical-details-toggle {
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9f1239;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.technical-details-toggle:focus-visible {
+  outline: 3px solid rgba(190, 18, 60, 0.18);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.agent-run-technical-details {
+  width: 100%;
+  max-width: 100%;
+  max-height: 280px;
+  margin: 12px 0 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #7f1d1d;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 @media (max-width: 700px) {
+  .agent-run-filter-bar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-run-filter-chip {
+    justify-content: center;
+    width: 100%;
+  }
+
   .agent-run-header {
     flex-direction: column;
   }

@@ -215,6 +215,57 @@ const isProcessingAgentRun = (run) =>
 
 const isWaitingAgentRun = (run) => run?.run_status === "needs_manual_action";
 
+const agentRunFilters = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active" },
+  { id: "completed", label: "Completed" },
+  { id: "failed", label: "Failed" },
+];
+
+const matchesAgentRunFilter = (run, filter) => {
+  if (filter === "active") {
+    return ["queued", "running", "needs_manual_action"].includes(
+      run?.run_status
+    );
+  }
+
+  if (filter === "completed") {
+    return run?.run_status === "completed";
+  }
+
+  if (filter === "failed") {
+    return run?.run_status === "failed";
+  }
+
+  return true;
+};
+
+const getAgentRunTimestamp = (run) => {
+  const timestamp = new Date(
+    run?.created_at || run?.started_at || run?.updated_at || 0
+  ).getTime();
+
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+};
+
+const getRunTechnicalError = (run) =>
+  [run?.error_message, run?.queue_error]
+    .filter(Boolean)
+    .filter((message, index, messages) => messages.indexOf(message) === index)
+    .join("\n\n");
+
+const getFriendlyRunError = (run) => {
+  if (run?.queue_error) {
+    return "This run could not be queued. Please try again when the worker is available.";
+  }
+
+  if (run?.run_type === "safe_browser_smoke_test") {
+    return "The safe browser test could not finish. You can review the details and try again.";
+  }
+
+  return "This application run could not be completed. You can review the details or retry it.";
+};
+
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -248,6 +299,8 @@ function CandidateDashboard() {
   const [agentRefreshLoading, setAgentRefreshLoading] = useState(false);
   const [browserTestLoading, setBrowserTestLoading] = useState(false);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
+  const [agentRunFilter, setAgentRunFilter] = useState("all");
+  const [expandedRunErrors, setExpandedRunErrors] = useState({});
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
   const fetchDashboardData = async () => {
@@ -821,6 +874,26 @@ function CandidateDashboard() {
 
   const processingRunsCount = externalAgentRuns.filter(isProcessingAgentRun).length;
   const waitingRunsCount = externalAgentRuns.filter(isWaitingAgentRun).length;
+  const sortedAgentRuns = [...externalAgentRuns].sort(
+    (firstRun, secondRun) =>
+      getAgentRunTimestamp(secondRun) - getAgentRunTimestamp(firstRun)
+  );
+  const visibleAgentRuns = sortedAgentRuns.filter((run) =>
+    matchesAgentRunFilter(run, agentRunFilter)
+  );
+  const agentRunFilterCounts = agentRunFilters.reduce((counts, filter) => {
+    counts[filter.id] = sortedAgentRuns.filter((run) =>
+      matchesAgentRunFilter(run, filter.id)
+    ).length;
+    return counts;
+  }, {});
+
+  const toggleRunTechnicalDetails = (agentRunId) => {
+    setExpandedRunErrors((currentExpandedRuns) => ({
+      ...currentExpandedRuns,
+      [agentRunId]: !currentExpandedRuns[agentRunId],
+    }));
+  };
 
   return (
     <main className="dashboard-shell">
@@ -1528,12 +1601,41 @@ function CandidateDashboard() {
           <span className="count-pill">{externalAgentRuns.length}</span>
         </div>
 
+        {externalAgentRuns.length > 0 && (
+          <div className="agent-run-filter-bar" aria-label="Filter agent runs">
+            {agentRunFilters.map((filter) => (
+              <button
+                type="button"
+                className={`agent-run-filter-chip ${
+                  agentRunFilter === filter.id ? "active" : ""
+                }`}
+                key={filter.id}
+                onClick={() => setAgentRunFilter(filter.id)}
+                aria-pressed={agentRunFilter === filter.id}
+              >
+                {filter.label}
+                <span>{agentRunFilterCounts[filter.id]}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {externalAgentRuns.length === 0 ? (
           <p className="empty-state">No AI agent runs yet.</p>
+        ) : visibleAgentRuns.length === 0 ? (
+          <p className="empty-state agent-run-filter-empty">
+            No {agentRunFilter} agent runs.
+          </p>
         ) : (
           <div className="agent-run-list">
-            {externalAgentRuns.map((run) => (
-              <article
+            {visibleAgentRuns.map((run) => {
+              const technicalError = getRunTechnicalError(run);
+              const technicalDetailsExpanded = Boolean(
+                expandedRunErrors[run.agent_run_id]
+              );
+
+              return (
+                <article
                 className={`agent-run-card ${
                   isProcessingAgentRun(run) ? "active-run" : ""
                 }`}
@@ -1567,11 +1669,34 @@ function CandidateDashboard() {
                 </div>
 
                 {run.summary && <p className="helper-text">{run.summary}</p>}
-                {run.error_message && (
-                  <p className="helper-text error-text">{run.error_message}</p>
+                {run.run_status === "failed" && technicalError && (
+                  <div className="agent-run-error" role="alert">
+                    <p className="agent-run-error-summary">
+                      {getFriendlyRunError(run)}
+                    </p>
+                    <button
+                      type="button"
+                      className="technical-details-toggle"
+                      onClick={() => toggleRunTechnicalDetails(run.agent_run_id)}
+                      aria-expanded={technicalDetailsExpanded}
+                      aria-controls={`run-error-${run.agent_run_id}`}
+                    >
+                      {technicalDetailsExpanded
+                        ? "Hide technical details"
+                        : "Show technical details"}
+                    </button>
+                    {technicalDetailsExpanded && (
+                      <pre
+                        className="agent-run-technical-details"
+                        id={`run-error-${run.agent_run_id}`}
+                      >
+                        {technicalError}
+                      </pre>
+                    )}
+                  </div>
                 )}
-                {run.queue_error && !run.error_message && (
-                  <p className="helper-text error-text">Queue error: {run.queue_error}</p>
+                {run.run_status !== "failed" && technicalError && (
+                  <p className="helper-text error-text">{technicalError}</p>
                 )}
 
                 <div className="agent-step-timeline">
@@ -1618,7 +1743,8 @@ function CandidateDashboard() {
                   </div>
                 )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
