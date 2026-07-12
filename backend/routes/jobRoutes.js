@@ -13,10 +13,15 @@ const {
 createJob
 }=require("../controllers/jobController");
 
+const {
+requireApprovedRecruiter
+}=require("../middleware/recruiterApprovalMiddleware");
+
 router.post(
 "/create",
 verifyToken,
 authorizeRole("recruiter"),
+requireApprovedRecruiter,
 createJob
 );
 

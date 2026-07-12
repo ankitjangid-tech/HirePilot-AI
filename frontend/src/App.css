@@ -64,6 +64,166 @@ button:disabled {
   background: linear-gradient(135deg, #ffffff 0%, #eff6ff 100%);
 }
 
+.admin-hero {
+  background: linear-gradient(135deg, #ffffff 0%, #f5f3ff 100%);
+}
+
+.admin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.admin-summary-grid article {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.admin-summary-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-summary-grid strong {
+  font-size: 26px;
+}
+
+.admin-summary-grid .pending {
+  border-color: #fed7aa;
+}
+
+.admin-summary-grid .approved {
+  border-color: #bbf7d0;
+}
+
+.admin-summary-grid .blocked {
+  border-color: #fecaca;
+}
+
+.admin-error-notice {
+  border-color: #fecaca;
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.admin-recruiter-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-recruiter-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.admin-recruiter-identity {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.admin-recruiter-identity > div {
+  min-width: 0;
+}
+
+.admin-recruiter-card h3 {
+  margin: 10px 0 4px;
+}
+
+.admin-recruiter-card p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-recruiter-date {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.admin-recruiter-date span {
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-status-reason {
+  margin-top: 12px !important;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.admin-recruiter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.recruiter-approval-notice {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid;
+  border-radius: 10px;
+}
+
+.recruiter-approval-notice.pending {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.recruiter-approval-notice.blocked {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.recruiter-approval-notice small {
+  margin-top: 3px;
+  font-weight: 700;
+}
+
+@media (max-width: 700px) {
+  .admin-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-recruiter-identity {
+    flex-direction: column;
+  }
+
+  .admin-recruiter-date {
+    text-align: left;
+  }
+
+  .admin-recruiter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 .dashboard-hero h1,
 .panel h2,
 .item-card h3,
@@ -319,6 +479,16 @@ button:disabled {
 .status-pending {
   background: var(--warning-bg);
   color: var(--warning);
+}
+
+.status-approved {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-blocked {
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .status-rejected {
