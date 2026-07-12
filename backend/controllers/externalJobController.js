@@ -676,6 +676,7 @@ const getMatchedExternalJobs = async (req, res) => {
        ON ea.external_job_id = ej.external_job_id
        AND ea.candidate_id = $1
        WHERE ej.is_active = TRUE
+       AND (ej.review_status IS NULL OR ej.review_status = 'approved')
        ORDER BY ej.external_job_id DESC`,
       [candidate.candidate_id]
     );
@@ -1041,7 +1042,8 @@ const executeExternalApplyAttempt = async ({
       `SELECT *
        FROM external_jobs
        WHERE external_job_id = $1
-       AND is_active = TRUE`,
+       AND is_active = TRUE
+       AND (review_status IS NULL OR review_status = 'approved')`,
       [external_job_id]
     );
 
@@ -2031,6 +2033,18 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext('hirepilot_crawl4ai_demo_discovery'))"
     );
+    const reviewColumnsResult = await client.query(
+      `SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+        AND table_name = 'external_jobs'
+        AND column_name = 'review_status'
+      ) AS has_review_status`
+    );
+    const hasReviewStatus = Boolean(
+      reviewColumnsResult.rows[0]?.has_review_status
+    );
 
     let insertedCount = 0;
     let updatedCount = 0;
@@ -2087,20 +2101,33 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
         savedJob = updateResult.rows[0];
         updatedCount += 1;
       } else {
+        const insertColumns = hasReviewStatus
+          ? `job_title,
+             company_name,
+             source_platform,
+             job_url,
+             required_skills,
+             experience_required,
+             location,
+             apply_mode,
+             is_active,
+             review_status`
+          : `job_title,
+             company_name,
+             source_platform,
+             job_url,
+             required_skills,
+             experience_required,
+             location,
+             apply_mode,
+             is_active`;
+        const insertValues = hasReviewStatus
+          ? "$1, $2, $3, $4, $5, $6, $7, $8, TRUE, 'pending_review'"
+          : "$1, $2, $3, $4, $5, $6, $7, $8, TRUE";
         const insertResult = await client.query(
-          `INSERT INTO external_jobs (
-            job_title,
-            company_name,
-            source_platform,
-            job_url,
-            required_skills,
-            experience_required,
-            location,
-            apply_mode,
-            is_active
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
-          RETURNING *`,
+          `INSERT INTO external_jobs (${insertColumns})
+           VALUES (${insertValues})
+           RETURNING *`,
           [
             job.job_title,
             job.company_name,
