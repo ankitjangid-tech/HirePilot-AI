@@ -109,6 +109,14 @@ button:disabled {
   border-color: #fecaca;
 }
 
+.admin-summary-grid .hidden {
+  border-color: #cbd5e1;
+}
+
+.external-review-summary-grid {
+  margin-top: 18px;
+}
+
 .admin-error-notice {
   border-color: #fecaca;
   background: var(--danger-bg);
@@ -179,6 +187,107 @@ button:disabled {
   border-top: 1px solid var(--line);
 }
 
+.admin-external-job-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-external-job-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.admin-external-job-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.admin-external-job-header > div {
+  min-width: 0;
+}
+
+.admin-external-job-header h3 {
+  margin: 10px 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.admin-external-job-header p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-external-job-badges,
+.admin-external-job-meta,
+.admin-external-job-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-external-job-meta {
+  margin-top: 13px;
+}
+
+.admin-external-job-meta span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-review-notes {
+  display: block;
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-review-notes textarea {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 10px 11px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-external-job-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.status-pending-review {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.status-hidden {
+  background: #e2e8f0;
+  color: #475569;
+}
+
 .recruiter-approval-notice {
   display: grid;
   gap: 4px;
@@ -219,6 +328,19 @@ button:disabled {
   }
 
   .admin-recruiter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-external-job-list {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-external-job-header {
+    flex-direction: column;
+  }
+
+  .admin-external-job-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }

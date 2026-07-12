@@ -27,3 +27,23 @@ export const updateRecruiterStatus = (token, userId, recruiterStatus) => {
     authHeaders(token)
   );
 };
+
+export const getExternalJobsForReview = (token) => {
+  return API.get("/admin/external-jobs", authHeaders(token));
+};
+
+export const reviewExternalJob = (
+  token,
+  externalJobId,
+  reviewStatus,
+  reviewNotes
+) => {
+  return API.patch(
+    `/admin/external-jobs/${externalJobId}/review`,
+    {
+      review_status: reviewStatus,
+      review_notes: reviewNotes || null,
+    },
+    authHeaders(token)
+  );
+};
