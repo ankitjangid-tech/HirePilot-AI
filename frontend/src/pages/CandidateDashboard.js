@@ -31,6 +31,7 @@ import {
   cancelExternalAgentRun,
   completeExternalApplication,
   runSafeBrowserSmokeTest,
+  resetSafeDummyExternalApplication,
 } from "../services/externalJobService";
 
 const emptyProfileForm = {
@@ -298,6 +299,7 @@ function CandidateDashboard() {
   const [agentRunActionId, setAgentRunActionId] = useState(null);
   const [agentRefreshLoading, setAgentRefreshLoading] = useState(false);
   const [browserTestLoading, setBrowserTestLoading] = useState(false);
+  const [safeDummyResetLoading, setSafeDummyResetLoading] = useState(false);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [agentRunFilter, setAgentRunFilter] = useState("all");
   const [expandedRunErrors, setExpandedRunErrors] = useState({});
@@ -754,6 +756,39 @@ function CandidateDashboard() {
       await fetchExternalAgentData({ silent: true });
     } finally {
       setBrowserTestLoading(false);
+    }
+  };
+
+  const handleResetSafeDummyApply = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalMessage("Please login again");
+        return;
+      }
+
+      setSafeDummyResetLoading(true);
+      setExternalMessage("Resetting safe dummy external application...");
+
+      const response = await resetSafeDummyExternalApplication(token);
+
+      setExternalMessage(
+        response.data.message || "Safe dummy external application reset"
+      );
+      await fetchExternalAgentData({ silent: true });
+    } catch (error) {
+      console.log(
+        "SAFE DUMMY EXTERNAL APPLY RESET ERROR:",
+        error.response?.data || error.message
+      );
+      setExternalMessage(
+        error.response?.data?.error ||
+          "Unable to reset safe dummy external application"
+      );
+      await fetchExternalAgentData({ silent: true });
+    } finally {
+      setSafeDummyResetLoading(false);
     }
   };
 
@@ -1590,6 +1625,20 @@ function CandidateDashboard() {
               >
                 {browserTestLoading ? "Testing browser..." : "Run Safe Browser Test"}
               </button>
+
+              {process.env.NODE_ENV !== "production" && (
+                <button
+                  type="button"
+                  className="secondary-button small-button development-only-button"
+                  onClick={handleResetSafeDummyApply}
+                  disabled={safeDummyResetLoading}
+                  title="Development only: reset the safe dummy application record"
+                >
+                  {safeDummyResetLoading
+                    ? "Resetting..."
+                    : "Reset Safe Dummy Apply"}
+                </button>
+              )}
 
               {lastAgentRefreshAt && (
                 <span className="live-progress-time">
