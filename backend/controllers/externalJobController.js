@@ -61,17 +61,34 @@ const calculateExternalMatch = (candidate, job) => {
   };
 };
 
+const getResumeFilename = (resumeUrl) => {
+  if (!resumeUrl) {
+    return null;
+  }
+
+  const pathWithoutQuery = String(resumeUrl).split(/[?#]/, 1)[0];
+  return pathWithoutQuery.split(/[\\/]/).filter(Boolean).pop() || null;
+};
+
 const getCandidateForUser = async (userId) => {
   const candidateResult = await pool.query(
     `SELECT
-      candidate_id,
-      skills,
-      experience_years,
-      preferred_role,
-      preferred_location,
-      expected_salary
-     FROM candidates
-     WHERE user_id = $1`,
+      c.candidate_id,
+      c.skills,
+      c.experience_years,
+      c.preferred_role,
+      c.preferred_location,
+      c.expected_salary,
+      c.phone_number,
+      c.current_location,
+      c.resume_url,
+      c.professional_summary,
+      u.full_name,
+      u.email
+     FROM candidates c
+     JOIN users u
+     ON u.user_id = c.user_id
+     WHERE c.user_id = $1`,
     [userId]
   );
 
@@ -389,9 +406,16 @@ const callPythonWorker = async ({
         match_score: match.match_score,
         matched_skills: match.matched_skills,
         missing_skills: match.missing_skills,
+        full_name: candidate.full_name,
+        email: candidate.email,
+        phone: candidate.phone_number,
+        current_location: candidate.current_location,
+        skills: candidate.skills,
         preferred_role: candidate.preferred_role,
         preferred_location: candidate.preferred_location,
         experience_years: candidate.experience_years,
+        resume_filename: getResumeFilename(candidate.resume_url),
+        professional_summary: candidate.professional_summary,
         force_retry: forceRetry,
         retry_source_agent_run_id: retrySourceAgentRunId,
       },

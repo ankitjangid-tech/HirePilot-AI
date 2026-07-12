@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import json
 import os
 import subprocess
@@ -50,10 +50,13 @@ def get_playwright_status() -> Dict[str, Any]:
 def run_playwright_safe_form_fill(
     full_name: str = "HirePilot Test Candidate",
     email: str = "candidate@example.com",
+    phone: str = "Not provided",
+    location: str = "Location not provided",
     role: str = "Junior Full Stack Developer",
     experience: str = "0 years",
     skills: str = "Python, SQL, React, JavaScript, HTML, CSS",
     resume_filename: str = "candidate-resume.pdf",
+    professional_summary: str = "Professional summary not provided",
     company_name: str = "HirePilot Safe Dummy Portal",
 ) -> Dict[str, Any]:
     try:
@@ -77,11 +80,14 @@ def run_playwright_safe_form_fill(
         <form id='application-form'>
           <label>Full Name <input id='full_name' name='full_name' /></label>
           <label>Email <input id='email' name='email' /></label>
+          <label>Phone <input id='phone' name='phone' /></label>
+          <label>Location <input id='location' name='location' /></label>
           <label>Company <input id='company_name' name='company_name' /></label>
           <label>Role <input id='role' name='role' /></label>
           <label>Experience <input id='experience' name='experience' /></label>
           <label>Skills <textarea id='skills' name='skills'></textarea></label>
           <label>Resume <input id='resume_filename' name='resume_filename' /></label>
+          <label>Professional Summary <textarea id='professional_summary' name='professional_summary'></textarea></label>
           <button id='submit-application' type='submit'>Submit Application</button>
         </form>
         <div id='result'></div>
@@ -102,11 +108,17 @@ def run_playwright_safe_form_fill(
             page.set_content(html)
             page.fill("#full_name", full_name or "HirePilot Test Candidate")
             page.fill("#email", email or "candidate@example.com")
+            page.fill("#phone", phone or "Not provided")
+            page.fill("#location", location or "Location not provided")
             page.fill("#company_name", company_name or "HirePilot Safe Dummy Portal")
             page.fill("#role", role or "External Job Candidate")
             page.fill("#experience", experience or "0 years")
             page.fill("#skills", skills or "Profile skills not provided")
             page.fill("#resume_filename", resume_filename or "candidate-resume.pdf")
+            page.fill(
+                "#professional_summary",
+                professional_summary or "Professional summary not provided",
+            )
             page.click("#submit-application")
             result_text = page.locator("#result").inner_text(timeout=3000)
             browser.close()
@@ -185,10 +197,16 @@ def run_playwright_safe_form_fill_isolated() -> Dict[str, Any]:
 
 def run_playwright_external_apply_isolated(
     *,
+    full_name: str,
+    email: str,
+    phone: str,
+    location: str,
     job_title: str,
     company_name: str,
     experience_years: Optional[int],
-    matched_skills: List[str],
+    skills: str,
+    resume_filename: str,
+    professional_summary: str,
 ) -> Dict[str, Any]:
     """
     Run the safe dummy external apply browser flow in a child process.
@@ -199,12 +217,15 @@ def run_playwright_external_apply_isolated(
     """
     timeout_ms = int(os.getenv("AI_BROWSER_TEST_TIMEOUT_MS", "30000"))
     safe_payload = {
-        "full_name": "HirePilot Candidate",
-        "email": "candidate@example.com",
+        "full_name": full_name,
+        "email": email,
+        "phone": phone,
+        "location": location,
         "role": job_title or "External Job Candidate",
         "experience": f"{experience_years or 0} years",
-        "skills": ", ".join(matched_skills or []) or "Profile skills not provided",
-        "resume_filename": "candidate-resume.pdf",
+        "skills": skills,
+        "resume_filename": resume_filename,
+        "professional_summary": professional_summary,
         "company_name": company_name or "HirePilot Safe Dummy Portal",
     }
 
@@ -421,9 +442,16 @@ class ExternalApplyPayload(BaseModel):
     match_score: int
     matched_skills: List[str] = []
     missing_skills: List[str] = []
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    current_location: Optional[str] = None
+    skills: Optional[str] = None
     preferred_role: Optional[str] = None
     preferred_location: Optional[str] = None
     experience_years: Optional[int] = None
+    resume_filename: Optional[str] = None
+    professional_summary: Optional[str] = None
     force_retry: bool = False
     retry_source_agent_run_id: Optional[int] = None
 
@@ -432,6 +460,58 @@ class BrowserSmokePayload(BaseModel):
     agent_run_id: int
     candidate_id: int
     requested_by_user_id: Optional[int] = None
+
+
+def safe_profile_value(value: Optional[str], fallback: str) -> Tuple[str, bool]:
+    if value is not None and str(value).strip():
+        return str(value).strip(), False
+
+    return fallback, True
+
+
+def build_safe_candidate_profile(payload: ExternalApplyPayload) -> Dict[str, Any]:
+    fallback_fields: List[str] = []
+
+    def resolve(field_name: str, value: Optional[str], fallback: str) -> str:
+        resolved_value, used_fallback = safe_profile_value(value, fallback)
+        if used_fallback:
+            fallback_fields.append(field_name)
+        return resolved_value
+
+    current_location = payload.current_location or payload.preferred_location
+    experience_years = payload.experience_years
+    if experience_years is None or experience_years < 0:
+        experience_years = 0
+        fallback_fields.append("experience_years")
+
+    return {
+        "full_name": resolve("full_name", payload.full_name, "HirePilot Candidate"),
+        "email": resolve("email", payload.email, "candidate@example.com"),
+        "phone": resolve("phone", payload.phone, "Not provided"),
+        "location": resolve(
+            "current_location",
+            current_location,
+            "Location not provided",
+        ),
+        "skills": resolve("skills", payload.skills, "Profile skills not provided"),
+        "experience_years": experience_years,
+        "preferred_role": resolve(
+            "preferred_role",
+            payload.preferred_role,
+            "External Job Candidate",
+        ),
+        "resume_filename": resolve(
+            "resume_filename",
+            payload.resume_filename,
+            "candidate-resume.pdf",
+        ),
+        "professional_summary": resolve(
+            "professional_summary",
+            payload.professional_summary,
+            "Professional summary not provided",
+        ),
+        "fallback_fields": fallback_fields,
+    }
 
 
 def split_skills(skills: Optional[str]) -> List[str]:
@@ -652,6 +732,8 @@ def browser_smoke_test(payload: BrowserSmokePayload):
 @app.post("/simulate-external-apply")
 def simulate_external_apply(payload: ExternalApplyPayload):
     try:
+        candidate_profile = build_safe_candidate_profile(payload)
+
         with get_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
                 cursor.execute(
@@ -700,11 +782,19 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     payload.agent_run_id,
                     "profile_loaded",
                     3,
-                    "Candidate profile and preferences loaded by Python worker.",
+                    (
+                        "Candidate profile loaded by Python worker. Safe fallback values were used for: "
+                        + ", ".join(candidate_profile["fallback_fields"])
+                        + "."
+                        if candidate_profile["fallback_fields"]
+                        else "Candidate profile and preferences loaded by Python worker."
+                    ),
                     metadata={
                         "preferred_role": payload.preferred_role,
                         "preferred_location": payload.preferred_location,
                         "experience_years": payload.experience_years,
+                        "fallback_fields": candidate_profile["fallback_fields"],
+                        "used_profile_fallbacks": bool(candidate_profile["fallback_fields"]),
                     },
                 )
 
@@ -916,10 +1006,16 @@ def simulate_external_apply(payload: ExternalApplyPayload):
 
                     try:
                         browser_result = run_playwright_external_apply_isolated(
+                            full_name=candidate_profile["full_name"],
+                            email=candidate_profile["email"],
+                            phone=candidate_profile["phone"],
+                            location=candidate_profile["location"],
                             job_title=payload.job_title,
                             company_name=payload.company_name,
-                            experience_years=payload.experience_years,
-                            matched_skills=payload.matched_skills,
+                            experience_years=candidate_profile["experience_years"],
+                            skills=candidate_profile["skills"],
+                            resume_filename=candidate_profile["resume_filename"],
+                            professional_summary=candidate_profile["professional_summary"],
                         )
                     except Exception as browser_error:
                         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as failure_cursor:
@@ -998,6 +1094,17 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                                 "role": payload.job_title,
                                 "company_name": payload.company_name,
                                 "matched_skills": payload.matched_skills,
+                                "profile_fields_used": [
+                                    "full_name",
+                                    "email",
+                                    "phone",
+                                    "current_location",
+                                    "skills",
+                                    "experience_years",
+                                    "preferred_role",
+                                    "resume_filename",
+                                    "professional_summary",
+                                ],
                                 "contains_real_submission": False,
                             },
                         )
@@ -1007,7 +1114,10 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                             "resume_upload_simulated",
                             9,
                             "Resume upload was simulated with a filename only. No real external portal upload occurred.",
-                            metadata={"resume_filename": "candidate-resume.pdf"},
+                            metadata={
+                                "resume_filename": candidate_profile["resume_filename"],
+                                "real_resume_upload": False,
+                            },
                         )
                         add_step(
                             browser_cursor,
