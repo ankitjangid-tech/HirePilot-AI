@@ -118,6 +118,11 @@ const shouldQueueExternalRuns = () =>
   isWorkerEnabled() &&
   String(process.env.AI_AGENT_QUEUE_ENABLED || "true").toLowerCase() === "true";
 
+const isDevelopmentEndpointEnabled = () =>
+  ["development", "test"].includes(
+    String(process.env.NODE_ENV || "development").toLowerCase()
+  );
+
 const isFinalRunStatus = (status) =>
   ["completed", "failed", "skipped", "cancelled"].includes(status);
 
@@ -1921,11 +1926,7 @@ const runSafeBrowserSmokeTest = async (req, res) => {
 };
 
 const resetSafeDummyExternalApplication = async (req, res) => {
-  const nodeEnvironment = String(
-    process.env.NODE_ENV || "development"
-  ).toLowerCase();
-
-  if (!["development", "test"].includes(nodeEnvironment)) {
+  if (!isDevelopmentEndpointEnabled()) {
     return res.status(404).json({
       error: "Development reset endpoint is not available",
     });
@@ -1982,6 +1983,181 @@ const resetSafeDummyExternalApplication = async (req, res) => {
   }
 };
 
+const runCrawl4AiDemoDiscovery = async (req, res) => {
+  if (!isDevelopmentEndpointEnabled()) {
+    return res.status(404).json({
+      error: "Development discovery endpoint is not available",
+    });
+  }
+
+  if (!isWorkerEnabled()) {
+    return res.status(400).json({
+      error: "Python worker is disabled. Enable it before running demo discovery.",
+    });
+  }
+
+  let client = null;
+
+  try {
+    const workerResponse = await axios.post(
+      `${workerBaseUrl()}/discovery/crawl4ai-demo`,
+      {},
+      {
+        timeout: Number(process.env.AI_WORKER_TIMEOUT_MS || 30000),
+      }
+    );
+    const discoveredJobs = Array.isArray(workerResponse.data?.jobs)
+      ? workerResponse.data.jobs
+      : [];
+    const safeJobs = discoveredJobs.filter(
+      (job) =>
+        job &&
+        job.source_platform === "Crawl4AI Demo Discovery" &&
+        job.apply_mode === "manual_questions" &&
+        job.discovery_source === "safe_raw_html" &&
+        String(job.job_url || "").startsWith("crawl4ai-demo://") &&
+        String(job.job_title || "").trim() &&
+        String(job.company_name || "").trim()
+    );
+
+    if (safeJobs.length !== 3 || safeJobs.length !== discoveredJobs.length) {
+      return res.status(502).json({
+        error: "Worker returned an invalid safe demo discovery payload",
+      });
+    }
+
+    client = await pool.connect();
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext('hirepilot_crawl4ai_demo_discovery'))"
+    );
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+    const jobs = [];
+
+    for (const job of safeJobs) {
+      const existingResult = await client.query(
+        `SELECT external_job_id
+         FROM external_jobs
+         WHERE (
+           source_platform = $1
+           AND job_title = $2
+           AND company_name = $3
+         )
+         OR job_url = $4
+         ORDER BY external_job_id
+         LIMIT 1`,
+        [
+          job.source_platform,
+          job.job_title,
+          job.company_name,
+          job.job_url,
+        ]
+      );
+
+      let savedJob;
+      if (existingResult.rows.length > 0) {
+        const updateResult = await client.query(
+          `UPDATE external_jobs
+           SET job_title = $2,
+               company_name = $3,
+               source_platform = $4,
+               job_url = $5,
+               required_skills = $6,
+               experience_required = $7,
+               location = $8,
+               apply_mode = $9,
+               is_active = TRUE,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE external_job_id = $1
+           RETURNING *`,
+          [
+            existingResult.rows[0].external_job_id,
+            job.job_title,
+            job.company_name,
+            job.source_platform,
+            job.job_url,
+            job.required_skills,
+            Number(job.experience_required) || 0,
+            job.location,
+            job.apply_mode,
+          ]
+        );
+        savedJob = updateResult.rows[0];
+        updatedCount += 1;
+      } else {
+        const insertResult = await client.query(
+          `INSERT INTO external_jobs (
+            job_title,
+            company_name,
+            source_platform,
+            job_url,
+            required_skills,
+            experience_required,
+            location,
+            apply_mode,
+            is_active
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+          RETURNING *`,
+          [
+            job.job_title,
+            job.company_name,
+            job.source_platform,
+            job.job_url,
+            job.required_skills,
+            Number(job.experience_required) || 0,
+            job.location,
+            job.apply_mode,
+          ]
+        );
+        savedJob = insertResult.rows[0];
+        insertedCount += 1;
+      }
+
+      jobs.push({
+        ...savedJob,
+        job_description: job.job_description,
+        discovery_source: job.discovery_source,
+      });
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      message: "Crawl4AI safe raw HTML demo discovery completed",
+      discovered_count: safeJobs.length,
+      inserted_count: insertedCount,
+      updated_count: updatedCount,
+      jobs,
+    });
+  } catch (error) {
+    if (client) {
+      await client.query("ROLLBACK");
+    }
+
+    const workerError =
+      error.response?.data?.detail ||
+      error.response?.data?.error ||
+      error.message ||
+      "Crawl4AI demo discovery failed";
+
+    console.log("CRAWL4AI DEMO DISCOVERY ERROR:", workerError);
+
+    return res.status(error.response?.status === 503 ? 503 : 500).json({
+      error:
+        typeof workerError === "string"
+          ? workerError
+          : "Crawl4AI demo discovery failed",
+    });
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+};
+
 module.exports = {
   getMatchedExternalJobs,
   getMyExternalApplications,
@@ -1994,4 +2170,5 @@ module.exports = {
   completeExternalApplication,
   runSafeBrowserSmokeTest,
   resetSafeDummyExternalApplication,
+  runCrawl4AiDemoDiscovery,
 };

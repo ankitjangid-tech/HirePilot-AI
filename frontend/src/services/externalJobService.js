@@ -80,3 +80,11 @@ export const resetSafeDummyExternalApplication = (token) => {
     authHeader(token)
   );
 };
+
+export const runCrawl4AiDemoDiscovery = (token) => {
+  return API.post(
+    "/external-jobs/discovery/crawl4ai-demo",
+    {},
+    authHeader(token)
+  );
+};

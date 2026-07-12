@@ -1509,6 +1509,32 @@ button:disabled {
   background: #fef3c7;
 }
 
+.external-discovery-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: -4px 0 16px;
+  padding: 10px 12px;
+  border: 1px dashed #f59e0b;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 700px) {
+  .external-discovery-tools {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .external-discovery-tools .development-only-button {
+    width: 100%;
+  }
+}
+
 .agent-run-card.active-run {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.09);

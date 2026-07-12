@@ -17,7 +17,18 @@ const {
   completeExternalApplication,
   runSafeBrowserSmokeTest,
   resetSafeDummyExternalApplication,
+  runCrawl4AiDemoDiscovery,
 } = require("../controllers/externalJobController");
+
+const authorizeDiscoveryTester = (req, res, next) => {
+  if (!["candidate", "recruiter"].includes(req.user?.role)) {
+    return res.status(403).json({
+      error: "Candidate or recruiter access required",
+    });
+  }
+
+  return next();
+};
 
 router.get(
   "/matched",
@@ -66,6 +77,13 @@ router.delete(
   verifyToken,
   authorizeRole("candidate"),
   resetSafeDummyExternalApplication
+);
+
+router.post(
+  "/discovery/crawl4ai-demo",
+  verifyToken,
+  authorizeDiscoveryTester,
+  runCrawl4AiDemoDiscovery
 );
 
 router.post(

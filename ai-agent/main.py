@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import re
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -25,6 +26,239 @@ app = FastAPI(
 )
 
 WORKER_NAME = os.getenv("AI_WORKER_NAME", "python_external_apply_worker_stub")
+
+
+def get_crawl4ai_status() -> Dict[str, Any]:
+    try:
+        from crawl4ai import AsyncWebCrawler  # noqa: F401
+
+        return {
+            "available": True,
+            "mode": "safe_raw_html_discovery",
+            "message": "Crawl4AI is available for hardcoded raw HTML demo discovery only.",
+        }
+    except Exception as error:
+        return {
+            "available": False,
+            "mode": "safe_raw_html_discovery",
+            "message": "Crawl4AI is not installed or could not be imported.",
+            "error": str(error),
+            "install_hint": "pip install -r requirements.txt && crawl4ai-setup",
+        }
+
+
+def build_crawl4ai_demo_html() -> str:
+    return """
+    <!doctype html>
+    <html>
+      <head><meta charset="utf-8"><title>HirePilot Crawl4AI Demo Jobs</title></head>
+      <body>
+        <main id="demo-jobs">
+          <article class="demo-job-card">
+            <h2 class="job-title">Demo React UI Engineer</h2>
+            <p class="company-name">PixelForge Demo Labs</p>
+            <p class="location">Remote</p>
+            <p class="required-skills">React,JavaScript,HTML,CSS</p>
+            <p class="experience-required">1</p>
+            <p class="job-description">Build accessible demo interfaces from local product specifications.</p>
+          </article>
+          <article class="demo-job-card">
+            <h2 class="job-title">Demo Python Data Analyst</h2>
+            <p class="company-name">InsightWorks Sandbox</p>
+            <p class="location">Jaipur / Remote</p>
+            <p class="required-skills">Python,SQL,Excel,Power BI</p>
+            <p class="experience-required">0</p>
+            <p class="job-description">Analyze safe demo datasets and prepare deterministic dashboard summaries.</p>
+          </article>
+          <article class="demo-job-card">
+            <h2 class="job-title">Demo AI Automation Associate</h2>
+            <p class="company-name">AgentCraft Demo Studio</p>
+            <p class="location">Remote</p>
+            <p class="required-skills">Python,SQL,AI,Playwright</p>
+            <p class="experience-required">1</p>
+            <p class="job-description">Support local-only AI workflow prototypes and safe browser test automation.</p>
+          </article>
+        </main>
+      </body>
+    </html>
+    """
+
+
+def crawl4ai_demo_slug(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug or "demo-job"
+
+
+async def discover_crawl4ai_demo_jobs() -> List[Dict[str, Any]]:
+    try:
+        from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
+        from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
+    except Exception as error:
+        raise RuntimeError(
+            "Crawl4AI is unavailable. Run: pip install -r requirements.txt && crawl4ai-setup"
+        ) from error
+
+    extraction_schema = {
+        "name": "HirePilot Safe Demo Jobs",
+        "baseSelector": "article.demo-job-card",
+        "fields": [
+            {"name": "job_title", "selector": ".job-title", "type": "text"},
+            {"name": "company_name", "selector": ".company-name", "type": "text"},
+            {"name": "location", "selector": ".location", "type": "text"},
+            {"name": "required_skills", "selector": ".required-skills", "type": "text"},
+            {
+                "name": "experience_required",
+                "selector": ".experience-required",
+                "type": "text",
+            },
+            {
+                "name": "job_description",
+                "selector": ".job-description",
+                "type": "text",
+            },
+        ],
+    }
+    crawl_config = CrawlerRunConfig(
+        cache_mode=CacheMode.BYPASS,
+        extraction_strategy=JsonCssExtractionStrategy(schema=extraction_schema),
+    )
+
+    async with AsyncWebCrawler() as crawler:
+        result = await crawler.arun(
+            url="raw:" + build_crawl4ai_demo_html(),
+            config=crawl_config,
+        )
+
+    if not result.success:
+        raise RuntimeError(
+            result.error_message or "Crawl4AI could not process the safe raw HTML demo."
+        )
+
+    extracted_jobs = json.loads(result.extracted_content or "[]")
+    if not isinstance(extracted_jobs, list) or len(extracted_jobs) != 3:
+        raise RuntimeError("Crawl4AI demo extraction did not return the expected 3 jobs.")
+
+    jobs: List[Dict[str, Any]] = []
+    for extracted_job in extracted_jobs:
+        job_title = str(extracted_job.get("job_title") or "").strip()
+        company_name = str(extracted_job.get("company_name") or "").strip()
+        if not job_title or not company_name:
+            raise RuntimeError("Crawl4AI demo extraction returned an incomplete job record.")
+
+        try:
+            experience_required = max(
+                int(extracted_job.get("experience_required") or 0),
+                0,
+            )
+        except (TypeError, ValueError):
+            experience_required = 0
+
+        jobs.append(
+            {
+                "job_title": job_title,
+                "company_name": company_name,
+                "location": str(extracted_job.get("location") or "Remote").strip(),
+                "required_skills": str(
+                    extracted_job.get("required_skills") or ""
+                ).strip(),
+                "experience_required": experience_required,
+                "job_description": str(
+                    extracted_job.get("job_description") or ""
+                ).strip(),
+                "source_platform": "Crawl4AI Demo Discovery",
+                "apply_mode": "manual_questions",
+                "job_url": f"crawl4ai-demo://{crawl4ai_demo_slug(job_title)}",
+                "discovery_source": "safe_raw_html",
+            }
+        )
+
+    return jobs
+
+
+def run_crawl4ai_demo_discovery_isolated() -> List[Dict[str, Any]]:
+    """
+    Run Crawl4AI in a fresh process so its Playwright transport owns a Windows
+    event loop that supports subprocess creation. The child receives no URL or
+    request data; it can only execute the hardcoded raw HTML demo above.
+    """
+    timeout_ms = int(os.getenv("AI_CRAWL4AI_DEMO_TIMEOUT_MS", "60000"))
+    result_marker = "HIREPILOT_CRAWL4AI_RESULT="
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import asyncio, json, sys; "
+            "policy = getattr(asyncio, 'WindowsProactorEventLoopPolicy', None); "
+            "sys.platform == 'win32' and policy and "
+            "asyncio.set_event_loop_policy(policy()); "
+            "from main import discover_crawl4ai_demo_jobs; "
+            f"print('{result_marker}' + json.dumps("
+            "asyncio.run(discover_crawl4ai_demo_jobs())))"
+        ),
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(BASE_DIR),
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_ms / 1000, 10),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            "Crawl4AI safe raw HTML demo discovery timed out. "
+            "No external website was contacted."
+        ) from error
+    except OSError as error:
+        raise RuntimeError(
+            f"Unable to start isolated Crawl4AI demo process: {error}"
+        ) from error
+
+    if completed.returncode != 0:
+        error_output = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            "Isolated Crawl4AI demo process failed: "
+            + (error_output[-4000:] or "No error output was returned.")
+        )
+
+    result_line = next(
+        (
+            line
+            for line in reversed(completed.stdout.splitlines())
+            if line.startswith(result_marker)
+        ),
+        None,
+    )
+    if not result_line:
+        raise RuntimeError(
+            "Isolated Crawl4AI demo process returned no structured result."
+        )
+
+    try:
+        jobs = json.loads(result_line[len(result_marker) :])
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "Unable to parse isolated Crawl4AI demo process output."
+        ) from error
+
+    if not isinstance(jobs, list) or len(jobs) != 3:
+        raise RuntimeError(
+            "Isolated Crawl4AI demo process did not return the expected 3 jobs."
+        )
+
+    if any(
+        job.get("discovery_source") != "safe_raw_html"
+        or job.get("source_platform") != "Crawl4AI Demo Discovery"
+        or job.get("apply_mode") != "manual_questions"
+        or not str(job.get("job_url") or "").startswith("crawl4ai-demo://")
+        for job in jobs
+    ):
+        raise RuntimeError(
+            "Isolated Crawl4AI demo process returned an unsafe job record."
+        )
+
+    return jobs
 
 
 
@@ -692,6 +926,7 @@ def health():
             "status": "degraded",
             "database_connected": database_connected,
             "error": str(error),
+            "crawl4ai": get_crawl4ai_status(),
         }
 
     return {
@@ -701,7 +936,33 @@ def health():
         "database_connected": database_connected,
         "mode": "safe_simulation",
         "browser_automation": get_playwright_status(),
+        "crawl4ai": get_crawl4ai_status(),
     }
+
+
+@app.post("/discovery/crawl4ai-demo")
+def crawl4ai_demo_discovery():
+    if not get_crawl4ai_status()["available"]:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Crawl4AI is unavailable. Run: pip install -r requirements.txt "
+                "and then crawl4ai-setup."
+            ),
+        )
+
+    try:
+        jobs = run_crawl4ai_demo_discovery_isolated()
+        return {
+            "success": True,
+            "message": "Crawl4AI safe raw HTML demo discovery completed",
+            "discovered_count": len(jobs),
+            "mode": "safe_raw_html_discovery",
+            "real_web_crawl": False,
+            "jobs": jobs,
+        }
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @app.post("/browser/smoke-test")
