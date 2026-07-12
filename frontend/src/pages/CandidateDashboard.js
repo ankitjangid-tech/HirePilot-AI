@@ -268,6 +268,44 @@ const getFriendlyRunError = (run) => {
   return "This application run could not be completed. You can review the details or retry it.";
 };
 
+const getExternalJobSkills = (job) => {
+  if (Array.isArray(job?.required_skills)) {
+    return job.required_skills.filter(Boolean);
+  }
+
+  return String(job?.required_skills || "")
+    .split(",")
+    .map((skill) => skill.trim())
+    .filter(Boolean);
+};
+
+const externalApplyModeLabel = (applyMode) => {
+  if (applyMode === "safe_browser_apply") {
+    return "Safe browser apply";
+  }
+
+  if (applyMode === "easy_apply") {
+    return "Auto-apply possible";
+  }
+
+  if (applyMode === "manual_questions") {
+    return "Manual questions likely";
+  }
+
+  return applyMode || "Not specified";
+};
+
+const isCrawl4AiDemoJob = (job) =>
+  job?.source_platform === "Crawl4AI Demo Discovery" ||
+  String(job?.job_url || "").startsWith("crawl4ai-demo://");
+
+const isSafeDummyJob = (job) =>
+  isCrawl4AiDemoJob(job) ||
+  String(job?.source_platform || "").toLowerCase().includes("safe dummy");
+
+const isSimulatedPlatform = (job) =>
+  /linkedin simulation|indeed simulation/i.test(job?.source_platform || "");
+
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -302,6 +340,7 @@ function CandidateDashboard() {
   const [browserTestLoading, setBrowserTestLoading] = useState(false);
   const [safeDummyResetLoading, setSafeDummyResetLoading] = useState(false);
   const [crawl4AiDiscoveryLoading, setCrawl4AiDiscoveryLoading] = useState(false);
+  const [selectedExternalJob, setSelectedExternalJob] = useState(null);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [agentRunFilter, setAgentRunFilter] = useState("all");
   const [expandedRunErrors, setExpandedRunErrors] = useState({});
@@ -466,6 +505,27 @@ function CandidateDashboard() {
 
     return () => window.clearInterval(refreshTimer);
   }, [externalAgentRuns]);
+
+  useEffect(() => {
+    if (!selectedExternalJob) {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    const handlePreviewKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setSelectedExternalJob(null);
+      }
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", handlePreviewKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handlePreviewKeyDown);
+    };
+  }, [selectedExternalJob]);
 
   const handleProfileInputChange = (event) => {
     const { name, value } = event.target;
@@ -1432,20 +1492,169 @@ function CandidateDashboard() {
                   </button>
                 )}
 
-                <a
-                  className="secondary-button link-button"
-                  href={job.job_url}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setSelectedExternalJob(job)}
                 >
                   View Source
-                </a>
+                </button>
               </div>
             </article>
           ))}
         </div>
       )}
       </section>
+
+      {selectedExternalJob && (
+        <div
+          className="external-preview-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedExternalJob(null);
+            }
+          }}
+        >
+          <section
+            className="external-preview-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="external-preview-title"
+          >
+            <div className="external-preview-header">
+              <div>
+                <div className="external-preview-badges">
+                  <span className="source-tag">
+                    {selectedExternalJob.source_platform || "External source"}
+                  </span>
+                  {isSafeDummyJob(selectedExternalJob) && (
+                    <span className="safe-demo-tag">Safe demo source</span>
+                  )}
+                </div>
+                <h2 id="external-preview-title">
+                  {selectedExternalJob.job_title || "External job"}
+                </h2>
+                <p>{selectedExternalJob.company_name || "Company not listed"}</p>
+              </div>
+              <button
+                type="button"
+                className="external-preview-close"
+                onClick={() => setSelectedExternalJob(null)}
+                aria-label="Close job source preview"
+                autoFocus
+              >
+                ×
+              </button>
+            </div>
+
+            {isCrawl4AiDemoJob(selectedExternalJob) && (
+              <div className="external-preview-safety-note safe">
+                <strong>Safe Crawl4AI demo</strong>
+                <span>
+                  No real external website is contacted in this demo mode.
+                </span>
+              </div>
+            )}
+
+            {isSimulatedPlatform(selectedExternalJob) && (
+              <div className="external-preview-safety-note simulated">
+                <strong>Simulated source</strong>
+                <span>
+                  This listing represents a simulated platform and is not a live
+                  LinkedIn or Indeed page.
+                </span>
+              </div>
+            )}
+
+            {isSafeDummyJob(selectedExternalJob) &&
+              !isCrawl4AiDemoJob(selectedExternalJob) && (
+                <div className="external-preview-safety-note safe">
+                  <strong>Safe dummy source</strong>
+                  <span>
+                    This source is part of HirePilot's local test flow. No real
+                    external website opens from this preview.
+                  </span>
+                </div>
+              )}
+
+            <div className="external-preview-details">
+              <div>
+                <span>Location</span>
+                <strong>{selectedExternalJob.location || "Not listed"}</strong>
+              </div>
+              <div>
+                <span>Experience required</span>
+                <strong>
+                  {selectedExternalJob.experience_required !== null &&
+                  selectedExternalJob.experience_required !== undefined
+                    ? `${selectedExternalJob.experience_required} year${
+                        Number(selectedExternalJob.experience_required) === 1
+                          ? ""
+                          : "s"
+                      }`
+                    : "Not listed"}
+                </strong>
+              </div>
+              <div>
+                <span>Salary</span>
+                <strong>{selectedExternalJob.salary || "Not listed"}</strong>
+              </div>
+              <div>
+                <span>Apply mode</span>
+                <strong>
+                  {externalApplyModeLabel(selectedExternalJob.apply_mode)}
+                </strong>
+              </div>
+            </div>
+
+            <div className="external-preview-section">
+              <span className="mini-label">Required skills</span>
+              {getExternalJobSkills(selectedExternalJob).length > 0 ? (
+                <div className="chip-row">
+                  {getExternalJobSkills(selectedExternalJob).map((skill) => (
+                    <span className="chip" key={skill}>
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p>Not listed</p>
+              )}
+            </div>
+
+            <div className="external-preview-section">
+              <span className="mini-label">Job description</span>
+              <p>
+                {selectedExternalJob.job_description ||
+                  selectedExternalJob.description ||
+                  "No additional job description was provided by this source."}
+              </p>
+            </div>
+
+            <div className="external-preview-section">
+              <span className="mini-label">Source reference</span>
+              <code className="external-source-reference">
+                {selectedExternalJob.job_url || "No source reference provided"}
+              </code>
+              <p className="external-source-helper">
+                Displayed for reference only. HirePilot does not open this source
+                automatically.
+              </p>
+            </div>
+
+            <div className="external-preview-footer">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setSelectedExternalJob(null)}
+              >
+                Close Preview
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
 
       <section className="dashboard-grid two-column">
