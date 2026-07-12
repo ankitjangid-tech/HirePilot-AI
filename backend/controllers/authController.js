@@ -19,20 +19,37 @@ const registerUser = async (req, res) => {
             role
         } = req.body;
 
+        const normalizedRole = String(role || "").toLowerCase();
+
+        if(!["candidate", "recruiter"].includes(normalizedRole)){
+            return res.status(400).json({
+                error:"Role must be candidate or recruiter"
+            });
+        }
+
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const result = await pool.query(
             `INSERT INTO users
-            (full_name,email,password_hash,role)
+            (full_name,email,password_hash,role,recruiter_status,recruiter_status_updated_at)
             
-            VALUES($1,$2,$3,$4)
+            VALUES($1,$2,$3,$4,$5,$6)
             
-            RETURNING *`,
+            RETURNING
+            user_id,
+            full_name,
+            email,
+            role,
+            recruiter_status,
+            recruiter_status_updated_at,
+            created_at`,
             [
                 full_name,
                 email,
                 hashedPassword,
-                role
+                normalizedRole,
+                normalizedRole === "recruiter" ? "pending" : null,
+                normalizedRole === "recruiter" ? new Date() : null
             ]
         );
 
@@ -109,7 +126,17 @@ const loginUser = async (req, res) => {
 
             role:
 
-            user.role
+            user.role,
+
+            recruiter_status:
+            user.role === "recruiter"
+            ? user.recruiter_status || "pending"
+            : null,
+
+            recruiter_status_reason:
+            user.role === "recruiter"
+            ? user.recruiter_status_reason || null
+            : null
 
         });
 

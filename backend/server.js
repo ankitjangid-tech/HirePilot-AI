@@ -1,5 +1,7 @@
 require("dotenv").config();
 
+const adminRoutes = require("./routes/adminRoutes");
+
 const externalJobRoutes=
 require("./routes/externalJobRoutes");
 const notificationRoutes=
@@ -45,6 +47,7 @@ const authRoutes = require("./routes/authRoutes");
 app.use(cors());
 app.use(express.json());
 app.use("/api/auth",authRoutes);
+app.use("/api/admin",adminRoutes);
 app.use("/api/candidate",candidateRoutes);
 app.use("/api/resume",resumeRoutes);
 app.use("/api/jobs",jobRoutes);

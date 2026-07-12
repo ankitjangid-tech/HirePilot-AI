@@ -24,13 +24,30 @@ function Login() {
 
       localStorage.setItem("token", response.data.token);
       localStorage.setItem("role", response.data.role);
+      if (response.data.role === "recruiter") {
+        localStorage.setItem(
+          "recruiter_status",
+          response.data.recruiter_status || "pending"
+        );
+        localStorage.setItem(
+          "recruiter_status_reason",
+          response.data.recruiter_status_reason || ""
+        );
+      } else {
+        localStorage.removeItem("recruiter_status");
+        localStorage.removeItem("recruiter_status_reason");
+      }
 
       setMessage("Login successful");
 
       if (response.data.role === "candidate") {
         navigate("/");
-      } else {
+      } else if (response.data.role === "recruiter") {
         navigate("/recruiter");
+      } else if (response.data.role === "admin") {
+        navigate("/admin");
+      } else {
+        setError("Unsupported account role");
       }
     } catch (err) {
       console.log("LOGIN ERROR:", err.response?.data || err.message);

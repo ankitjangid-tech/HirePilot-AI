@@ -116,6 +116,10 @@ function RecruiterDashboard() {
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [expandedApplicationId, setExpandedApplicationId] = useState(null);
   const [interviewForms, setInterviewForms] = useState({});
+  const [recruiterApproval, setRecruiterApproval] = useState({
+    status: localStorage.getItem("recruiter_status") || null,
+    reason: localStorage.getItem("recruiter_status_reason") || "",
+  });
 
   useEffect(() => {
     fetchJobs();
@@ -142,6 +146,15 @@ function RecruiterDashboard() {
       const response = await getMyJobs(token);
 
       setJobs(response.data.jobs || []);
+      const recruiterStatus = response.data.recruiter_status || "pending";
+      const recruiterStatusReason = response.data.recruiter_status_reason || "";
+
+      setRecruiterApproval({
+        status: recruiterStatus,
+        reason: recruiterStatusReason,
+      });
+      localStorage.setItem("recruiter_status", recruiterStatus);
+      localStorage.setItem("recruiter_status_reason", recruiterStatusReason);
     } catch (error) {
       console.log("FETCH JOBS ERROR:", error.response?.data || error.message);
       setActionMessage("Unable to fetch recruiter jobs");
@@ -747,6 +760,28 @@ function RecruiterDashboard() {
       </section>
 
       {actionMessage && <div className="notice-banner">{actionMessage}</div>}
+
+      {recruiterApproval.status === "pending" && (
+        <div className="recruiter-approval-notice pending" role="status">
+          <strong>Recruiter approval pending</strong>
+          <span>
+            Your account is awaiting admin approval. You can review existing
+            information, but you cannot post new jobs yet.
+          </span>
+          {recruiterApproval.reason && <small>{recruiterApproval.reason}</small>}
+        </div>
+      )}
+
+      {recruiterApproval.status === "blocked" && (
+        <div className="recruiter-approval-notice blocked" role="alert">
+          <strong>Recruiter account blocked</strong>
+          <span>
+            Job posting is disabled for this account. Contact the platform admin
+            for assistance.
+          </span>
+          {recruiterApproval.reason && <small>{recruiterApproval.reason}</small>}
+        </div>
+      )}
 
       <section className="panel">
         <div className="section-heading">
