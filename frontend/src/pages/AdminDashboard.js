@@ -5,6 +5,7 @@ import {
   getRecruiters,
   updateRecruiterStatus,
   getExternalJobsForReview,
+  runCrawl4AiDemoDiscovery,
   reviewExternalJob,
 } from "../services/adminService";
 
@@ -35,6 +36,9 @@ function AdminDashboard() {
   const [error, setError] = useState("");
   const [externalJobs, setExternalJobs] = useState([]);
   const [externalJobsLoading, setExternalJobsLoading] = useState(true);
+  const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
+  const [discoveryError, setDiscoveryError] = useState("");
   const [busyExternalJobId, setBusyExternalJobId] = useState(null);
   const [reviewNotes, setReviewNotes] = useState({});
 
@@ -99,7 +103,7 @@ function AdminDashboard() {
     try {
       const token = localStorage.getItem("token");
 
-      if (!token || localStorage.getItem("role") !== "admin") {
+      if (!token) {
         setExternalJobsLoading(false);
         return;
       }
@@ -196,6 +200,52 @@ function AdminDashboard() {
       );
     } finally {
       setBusyExternalJobId(null);
+    }
+  };
+
+  const handleRunCrawl4AiDemoDiscovery = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setDiscoveryError("Please sign in again to run discovery.");
+        return;
+      }
+
+      setDiscoveryLoading(true);
+      setDiscoveryMessage("");
+      setDiscoveryError("");
+
+      const response = await runCrawl4AiDemoDiscovery(token);
+      const result = response.data || {};
+
+      if (!result.success) {
+        throw new Error(
+          result.message || "Unable to run Crawl4AI demo discovery"
+        );
+      }
+
+      await fetchExternalJobs();
+      setDiscoveryMessage(
+        `Crawl4AI demo discovery completed. Discovered: ${
+          result.discovered_count ?? 0
+        }; inserted: ${result.inserted_count ?? 0}; updated: ${
+          result.updated_count ?? 0
+        }.`
+      );
+    } catch (requestError) {
+      console.log(
+        "ADMIN CRAWL4AI DEMO DISCOVERY ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setDiscoveryError(
+        requestError.response?.data?.message ||
+          requestError.response?.data?.error ||
+          requestError.message ||
+          "Unable to run Crawl4AI demo discovery"
+      );
+    } finally {
+      setDiscoveryLoading(false);
     }
   };
 
@@ -323,6 +373,54 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+
+      {process.env.NODE_ENV !== "production" && (
+        <section className="panel admin-discovery-operations-panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Discovery Operations</p>
+              <h2>External Job Discovery</h2>
+              <p className="muted">
+                Run the controlled demo source, then review newly discovered jobs
+                before approving candidate access.
+              </p>
+            </div>
+          </div>
+
+          <div className="admin-discovery-operation">
+            <div>
+              <strong>Crawl4AI demo discovery</strong>
+              <p>
+                Safe raw local demo HTML only. No external website is contacted.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={handleRunCrawl4AiDemoDiscovery}
+              disabled={discoveryLoading}
+            >
+              {discoveryLoading
+                ? "Running Demo Discovery..."
+                : "Run Crawl4AI Demo Discovery"}
+            </button>
+          </div>
+
+          {discoveryMessage && (
+            <div className="notice-banner compact" role="status">
+              {discoveryMessage}
+            </div>
+          )}
+          {discoveryError && (
+            <div
+              className="notice-banner compact admin-error-notice"
+              role="alert"
+            >
+              {discoveryError}
+            </div>
+          )}
+        </section>
+      )}
 
       <section
         className="admin-summary-grid external-review-summary-grid"

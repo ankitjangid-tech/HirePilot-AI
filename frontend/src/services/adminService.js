@@ -32,6 +32,14 @@ export const getExternalJobsForReview = (token) => {
   return API.get("/admin/external-jobs", authHeaders(token));
 };
 
+export const runCrawl4AiDemoDiscovery = (token) => {
+  return API.post(
+    "/admin/discovery/crawl4ai-demo",
+    {},
+    authHeaders(token)
+  );
+};
+
 export const reviewExternalJob = (
   token,
   externalJobId,
