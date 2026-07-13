@@ -8,6 +8,9 @@ const {
   updateRecruiterStatus,
   getExternalJobs,
   reviewExternalJob,
+  getExternalSources,
+  createExternalSource,
+  updateExternalSource,
   runCrawl4AiDemoDiscovery,
 } = require("../controllers/adminController");
 
@@ -37,6 +40,27 @@ router.patch(
   verifyToken,
   authorizeRole("admin"),
   reviewExternalJob
+);
+
+router.get(
+  "/external-sources",
+  verifyToken,
+  authorizeRole("admin"),
+  getExternalSources
+);
+
+router.post(
+  "/external-sources",
+  verifyToken,
+  authorizeRole("admin"),
+  createExternalSource
+);
+
+router.patch(
+  "/external-sources/:sourceId",
+  verifyToken,
+  authorizeRole("admin"),
+  updateExternalSource
 );
 
 router.post(

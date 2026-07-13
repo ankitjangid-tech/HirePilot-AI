@@ -5,9 +5,28 @@ import {
   getRecruiters,
   updateRecruiterStatus,
   getExternalJobsForReview,
+  getExternalSources,
+  createExternalSource,
+  updateExternalSource,
   runCrawl4AiDemoDiscovery,
   reviewExternalJob,
 } from "../services/adminService";
+
+const emptyExternalSourceForm = {
+  source_name: "",
+  source_key: "",
+  source_type: "demo_raw_html",
+  base_url: "",
+  safety_mode: "manual_review",
+  notes: "",
+};
+
+const externalSourceTypes = [
+  { value: "demo_raw_html", label: "Demo raw HTML" },
+  { value: "simulated_platform", label: "Simulated platform" },
+  { value: "company_career_page", label: "Company career page" },
+  { value: "job_board", label: "Job board" },
+];
 
 const statusClass = (status) =>
   `status-badge status-${String(status || "pending")
@@ -41,6 +60,16 @@ function AdminDashboard() {
   const [discoveryError, setDiscoveryError] = useState("");
   const [busyExternalJobId, setBusyExternalJobId] = useState(null);
   const [reviewNotes, setReviewNotes] = useState({});
+  const [externalSources, setExternalSources] = useState([]);
+  const [externalSourcesLoading, setExternalSourcesLoading] = useState(true);
+  const [externalSourceForm, setExternalSourceForm] = useState(
+    emptyExternalSourceForm
+  );
+  const [sourceNotes, setSourceNotes] = useState({});
+  const [sourceCreating, setSourceCreating] = useState(false);
+  const [busySourceId, setBusySourceId] = useState(null);
+  const [sourceMessage, setSourceMessage] = useState("");
+  const [sourceError, setSourceError] = useState("");
 
   const statusCounts = useMemo(
     () =>
@@ -68,9 +97,21 @@ function AdminDashboard() {
     [externalJobs]
   );
 
+  const crawl4AiDemoSource = useMemo(
+    () =>
+      externalSources.find((source) => source.source_key === "crawl4ai_demo") ||
+      null,
+    [externalSources]
+  );
+  const crawl4AiDemoAllowed = Boolean(
+    crawl4AiDemoSource?.is_enabled &&
+      crawl4AiDemoSource?.trust_status === "approved"
+  );
+
   useEffect(() => {
     fetchRecruiters();
     fetchExternalJobs();
+    fetchExternalSources();
   }, []);
 
   const fetchRecruiters = async () => {
@@ -130,6 +171,127 @@ function AdminDashboard() {
       );
     } finally {
       setExternalJobsLoading(false);
+    }
+  };
+
+  const fetchExternalSources = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setExternalSourcesLoading(false);
+        return;
+      }
+
+      setExternalSourcesLoading(true);
+      const response = await getExternalSources(token);
+      const rows = response.data.externalSources || [];
+
+      setExternalSources(rows);
+      setSourceNotes(
+        rows.reduce((notes, source) => {
+          notes[source.external_source_id] = source.notes || "";
+          return notes;
+        }, {})
+      );
+    } catch (requestError) {
+      console.log(
+        "ADMIN EXTERNAL SOURCE FETCH ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setSourceError(
+        requestError.response?.data?.error ||
+          "Unable to fetch external discovery sources"
+      );
+    } finally {
+      setExternalSourcesLoading(false);
+    }
+  };
+
+  const handleExternalSourceFormChange = (event) => {
+    const { name, value } = event.target;
+
+    setExternalSourceForm((currentForm) => ({
+      ...currentForm,
+      [name]: value,
+    }));
+  };
+
+  const handleCreateExternalSource = async (event) => {
+    event.preventDefault();
+
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setSourceError("Please sign in again to create a source.");
+        return;
+      }
+
+      setSourceCreating(true);
+      setSourceMessage("");
+      setSourceError("");
+
+      const response = await createExternalSource(token, externalSourceForm);
+
+      setExternalSourceForm(emptyExternalSourceForm);
+      setSourceMessage(
+        response.data.message || "External discovery source created."
+      );
+      await fetchExternalSources();
+    } catch (requestError) {
+      console.log(
+        "ADMIN EXTERNAL SOURCE CREATE ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setSourceError(
+        requestError.response?.data?.error ||
+          "Unable to create external discovery source"
+      );
+    } finally {
+      setSourceCreating(false);
+    }
+  };
+
+  const handleExternalSourceUpdate = async (sourceId, updates) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setSourceError("Please sign in again to update this source.");
+        return;
+      }
+
+      setBusySourceId(sourceId);
+      setSourceMessage("");
+      setSourceError("");
+
+      const response = await updateExternalSource(token, sourceId, updates);
+      const updatedSource = response.data.externalSource;
+
+      setExternalSources((currentSources) =>
+        currentSources.map((source) =>
+          source.external_source_id === sourceId ? updatedSource : source
+        )
+      );
+      setSourceNotes((currentNotes) => ({
+        ...currentNotes,
+        [sourceId]: updatedSource.notes || "",
+      }));
+      setSourceMessage(
+        response.data.message || "External discovery source updated."
+      );
+    } catch (requestError) {
+      console.log(
+        "ADMIN EXTERNAL SOURCE UPDATE ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setSourceError(
+        requestError.response?.data?.error ||
+          "Unable to update external discovery source"
+      );
+    } finally {
+      setBusySourceId(null);
     }
   };
 
@@ -212,6 +374,13 @@ function AdminDashboard() {
         return;
       }
 
+      if (!crawl4AiDemoAllowed) {
+        setDiscoveryError(
+          "Crawl4AI demo discovery source is disabled or not approved."
+        );
+        return;
+      }
+
       setDiscoveryLoading(true);
       setDiscoveryMessage("");
       setDiscoveryError("");
@@ -252,7 +421,11 @@ function AdminDashboard() {
   const handleRefreshAll = async () => {
     setRefreshing(true);
     setMessage("");
-    await Promise.all([fetchRecruiters(), fetchExternalJobs()]);
+    await Promise.all([
+      fetchRecruiters(),
+      fetchExternalJobs(),
+      fetchExternalSources(),
+    ]);
     setRefreshing(false);
   };
 
@@ -374,6 +547,280 @@ function AdminDashboard() {
         )}
       </section>
 
+      <section className="panel admin-external-sources-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Source Governance</p>
+            <h2>External Sources</h2>
+            <p className="muted">
+              Approve and enable a source before any discovery operation can use
+              it.
+            </p>
+          </div>
+          <span className="count-pill">{externalSources.length}</span>
+        </div>
+
+        <form
+          className="admin-source-create-form"
+          onSubmit={handleCreateExternalSource}
+        >
+          <div className="admin-source-form-heading">
+            <div>
+              <h3>Add external source</h3>
+              <p>
+                New sources start disabled and pending until an admin explicitly
+                approves and enables them.
+              </p>
+            </div>
+          </div>
+
+          <div className="admin-source-form-grid">
+            <label>
+              Source name
+              <input
+                type="text"
+                name="source_name"
+                value={externalSourceForm.source_name}
+                onChange={handleExternalSourceFormChange}
+                placeholder="Example Company Careers"
+                required
+              />
+            </label>
+            <label>
+              Source key
+              <input
+                type="text"
+                name="source_key"
+                value={externalSourceForm.source_key}
+                onChange={handleExternalSourceFormChange}
+                placeholder="example_company_careers"
+                pattern="[a-z0-9][a-z0-9_-]*"
+                required
+              />
+            </label>
+            <label>
+              Source type
+              <select
+                name="source_type"
+                value={externalSourceForm.source_type}
+                onChange={handleExternalSourceFormChange}
+              >
+                {externalSourceTypes.map((sourceType) => (
+                  <option value={sourceType.value} key={sourceType.value}>
+                    {sourceType.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Safety mode
+              <input
+                type="text"
+                name="safety_mode"
+                value={externalSourceForm.safety_mode}
+                onChange={handleExternalSourceFormChange}
+                placeholder="manual_review"
+              />
+            </label>
+            <label className="admin-source-form-wide">
+              Base URL or source reference
+              <input
+                type="text"
+                name="base_url"
+                value={externalSourceForm.base_url}
+                onChange={handleExternalSourceFormChange}
+                placeholder="Optional; adding a source does not contact this URL"
+              />
+            </label>
+            <label className="admin-source-form-wide">
+              Notes
+              <textarea
+                name="notes"
+                value={externalSourceForm.notes}
+                onChange={handleExternalSourceFormChange}
+                placeholder="Internal safety and review notes"
+                rows="3"
+              />
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={sourceCreating}
+          >
+            {sourceCreating ? "Creating Source..." : "Create Source"}
+          </button>
+        </form>
+
+        {sourceMessage && (
+          <div className="notice-banner compact" role="status">
+            {sourceMessage}
+          </div>
+        )}
+        {sourceError && (
+          <div
+            className="notice-banner compact admin-error-notice"
+            role="alert"
+          >
+            {sourceError}
+          </div>
+        )}
+
+        {externalSourcesLoading ? (
+          <p className="empty-state">Loading external sources...</p>
+        ) : externalSources.length === 0 ? (
+          <p className="empty-state">No external discovery sources found.</p>
+        ) : (
+          <div className="admin-source-list">
+            {externalSources.map((source) => {
+              const isCrawl4AiDemo = source.source_key === "crawl4ai_demo";
+              const sourceBusy = busySourceId === source.external_source_id;
+
+              return (
+                <article
+                  className={`admin-source-card ${
+                    isCrawl4AiDemo ? "safe-demo-source" : ""
+                  }`}
+                  key={source.external_source_id}
+                >
+                  <div className="admin-source-card-header">
+                    <div>
+                      <div className="admin-source-badges">
+                        <span className={statusClass(source.trust_status)}>
+                          {source.trust_status}
+                        </span>
+                        <span
+                          className={`status-badge ${
+                            source.is_enabled
+                              ? "status-approved"
+                              : "status-hidden"
+                          }`}
+                        >
+                          {source.is_enabled ? "Enabled" : "Disabled"}
+                        </span>
+                      </div>
+                      <h3>{source.source_name}</h3>
+                      <code>{source.source_key}</code>
+                    </div>
+                    <div className="admin-recruiter-date">
+                      <span>Updated</span>
+                      <strong>{formatCreatedDate(source.updated_at)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="admin-source-meta">
+                    <span>
+                      {String(source.source_type || "Not specified").replace(
+                        /_/g,
+                        " "
+                      )}
+                    </span>
+                    <span>
+                      Safety: {String(source.safety_mode || "manual_review").replace(
+                        /_/g,
+                        " "
+                      )}
+                    </span>
+                  </div>
+
+                  {source.base_url && (
+                    <p className="admin-source-reference">
+                      <strong>Reference:</strong> {source.base_url}
+                    </p>
+                  )}
+
+                  {isCrawl4AiDemo && (
+                    <div className="admin-safe-source-note">
+                      <strong>Safe raw local demo HTML only</strong>
+                      <span>No external website contacted.</span>
+                    </div>
+                  )}
+
+                  <label className="admin-review-notes">
+                    Notes
+                    <textarea
+                      value={sourceNotes[source.external_source_id] || ""}
+                      onChange={(event) =>
+                        setSourceNotes((currentNotes) => ({
+                          ...currentNotes,
+                          [source.external_source_id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Internal source notes"
+                      rows="3"
+                    />
+                  </label>
+
+                  <div className="admin-source-actions">
+                    <button
+                      type="button"
+                      className="primary-button small-button"
+                      onClick={() =>
+                        handleExternalSourceUpdate(source.external_source_id, {
+                          is_enabled: true,
+                        })
+                      }
+                      disabled={sourceBusy || source.is_enabled}
+                    >
+                      Enable
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button small-button"
+                      onClick={() =>
+                        handleExternalSourceUpdate(source.external_source_id, {
+                          is_enabled: false,
+                        })
+                      }
+                      disabled={sourceBusy || !source.is_enabled}
+                    >
+                      Disable
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button small-button"
+                      onClick={() =>
+                        handleExternalSourceUpdate(source.external_source_id, {
+                          trust_status: "approved",
+                        })
+                      }
+                      disabled={sourceBusy || source.trust_status === "approved"}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button small-button"
+                      onClick={() =>
+                        handleExternalSourceUpdate(source.external_source_id, {
+                          trust_status: "blocked",
+                        })
+                      }
+                      disabled={sourceBusy || source.trust_status === "blocked"}
+                    >
+                      Block
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button small-button"
+                      onClick={() =>
+                        handleExternalSourceUpdate(source.external_source_id, {
+                          notes: sourceNotes[source.external_source_id] || null,
+                        })
+                      }
+                      disabled={sourceBusy}
+                    >
+                      {sourceBusy ? "Updating..." : "Save Notes"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {process.env.NODE_ENV !== "production" && (
         <section className="panel admin-discovery-operations-panel">
           <div className="section-heading">
@@ -391,14 +838,22 @@ function AdminDashboard() {
             <div>
               <strong>Crawl4AI demo discovery</strong>
               <p>
-                Safe raw local demo HTML only. No external website is contacted.
+                {externalSourcesLoading
+                  ? "Checking source allowlist..."
+                  : crawl4AiDemoAllowed
+                  ? "Safe raw local demo HTML only. No external website is contacted."
+                  : "Crawl4AI demo discovery source is disabled or not approved."}
               </p>
             </div>
             <button
               type="button"
               className="primary-button"
               onClick={handleRunCrawl4AiDemoDiscovery}
-              disabled={discoveryLoading}
+              disabled={
+                discoveryLoading ||
+                externalSourcesLoading ||
+                !crawl4AiDemoAllowed
+              }
             >
               {discoveryLoading
                 ? "Running Demo Discovery..."

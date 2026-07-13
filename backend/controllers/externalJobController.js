@@ -1992,15 +1992,34 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
     });
   }
 
-  if (!isWorkerEnabled()) {
-    return res.status(400).json({
-      error: "Python worker is disabled. Enable it before running demo discovery.",
-    });
-  }
-
   let client = null;
 
   try {
+    const sourceResult = await pool.query(
+      `SELECT is_enabled, trust_status
+       FROM external_sources
+       WHERE source_key = $1
+       LIMIT 1`,
+      ["crawl4ai_demo"]
+    );
+    const discoverySource = sourceResult.rows[0];
+
+    if (
+      !discoverySource ||
+      discoverySource.is_enabled !== true ||
+      discoverySource.trust_status !== "approved"
+    ) {
+      return res.status(403).json({
+        error: "Crawl4AI demo discovery source is disabled or not approved.",
+      });
+    }
+
+    if (!isWorkerEnabled()) {
+      return res.status(400).json({
+        error: "Python worker is disabled. Enable it before running demo discovery.",
+      });
+    }
+
     const workerResponse = await axios.post(
       `${workerBaseUrl()}/discovery/crawl4ai-demo`,
       {},
