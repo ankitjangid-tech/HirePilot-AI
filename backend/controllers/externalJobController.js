@@ -2005,7 +2005,10 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
       `${workerBaseUrl()}/discovery/crawl4ai-demo`,
       {},
       {
-        timeout: Number(process.env.AI_WORKER_TIMEOUT_MS || 30000),
+        timeout: Math.max(
+          Number(process.env.AI_WORKER_TIMEOUT_MS || 30000),
+          45000
+        ),
       }
     );
     const discoveredJobs = Array.isArray(workerResponse.data?.jobs)

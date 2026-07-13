@@ -1,4 +1,7 @@
 const pool = require("../config/db");
+const {
+  runCrawl4AiDemoDiscovery: runExternalCrawl4AiDemoDiscovery,
+} = require("./externalJobController");
 
 const RECRUITER_STATUSES = ["pending", "approved", "blocked"];
 const EXTERNAL_JOB_REVIEW_STATUSES = [
@@ -206,9 +209,49 @@ const reviewExternalJob = async (req, res) => {
   }
 };
 
+const runCrawl4AiDemoDiscovery = async (req, res) => {
+  const sendJson = res.json.bind(res);
+
+  res.json = (payload = {}) => {
+    const success = res.statusCode >= 200 && res.statusCode < 300;
+
+    if (!success) {
+      return sendJson({
+        ...payload,
+        success: false,
+        message:
+          payload.message ||
+          payload.error ||
+          "Crawl4AI demo discovery failed",
+      });
+    }
+
+    return sendJson({
+      success: true,
+      message:
+        payload.message || "Crawl4AI demo discovery completed",
+      discovered_count: Number(payload.discovered_count || 0),
+      inserted_count: Number(payload.inserted_count || 0),
+      updated_count: Number(payload.updated_count || 0),
+      jobs: Array.isArray(payload.jobs) ? payload.jobs : [],
+    });
+  };
+
+  try {
+    return await runExternalCrawl4AiDemoDiscovery(req, res);
+  } catch (error) {
+    console.log("ADMIN CRAWL4AI DEMO DISCOVERY ERROR:", error.message);
+
+    return res.status(500).json({
+      error: "Unable to run Crawl4AI demo discovery",
+    });
+  }
+};
+
 module.exports = {
   getRecruiters,
   updateRecruiterStatus,
   getExternalJobs,
   reviewExternalJob,
+  runCrawl4AiDemoDiscovery,
 };

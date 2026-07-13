@@ -32,7 +32,6 @@ import {
   completeExternalApplication,
   runSafeBrowserSmokeTest,
   resetSafeDummyExternalApplication,
-  runCrawl4AiDemoDiscovery,
 } from "../services/externalJobService";
 
 const emptyProfileForm = {
@@ -339,7 +338,6 @@ function CandidateDashboard() {
   const [agentRefreshLoading, setAgentRefreshLoading] = useState(false);
   const [browserTestLoading, setBrowserTestLoading] = useState(false);
   const [safeDummyResetLoading, setSafeDummyResetLoading] = useState(false);
-  const [crawl4AiDiscoveryLoading, setCrawl4AiDiscoveryLoading] = useState(false);
   const [selectedExternalJob, setSelectedExternalJob] = useState(null);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [agentRunFilter, setAgentRunFilter] = useState("all");
@@ -851,39 +849,6 @@ function CandidateDashboard() {
       await fetchExternalAgentData({ silent: true });
     } finally {
       setSafeDummyResetLoading(false);
-    }
-  };
-
-  const handleRunCrawl4AiDemoDiscovery = async () => {
-    try {
-      const token = localStorage.getItem("token");
-
-      if (!token) {
-        setExternalMessage("Please login again");
-        return;
-      }
-
-      setCrawl4AiDiscoveryLoading(true);
-      setExternalMessage("Running safe Crawl4AI raw HTML demo discovery...");
-
-      const response = await runCrawl4AiDemoDiscovery(token);
-      const result = response.data;
-
-      setExternalMessage(
-        `${result.message}. Discovered: ${result.discovered_count}; inserted: ${result.inserted_count}; updated: ${result.updated_count}.`
-      );
-      await fetchExternalAgentData({ silent: true });
-    } catch (error) {
-      console.log(
-        "CRAWL4AI DEMO DISCOVERY ERROR:",
-        error.response?.data || error.message
-      );
-      setExternalMessage(
-        error.response?.data?.error || "Crawl4AI demo discovery failed"
-      );
-      await fetchExternalAgentData({ silent: true });
-    } finally {
-      setCrawl4AiDiscoveryLoading(false);
     }
   };
 
@@ -1410,29 +1375,11 @@ function CandidateDashboard() {
           <p className="eyebrow">External Discovery</p>
           <h2>External Matched Jobs</h2>
           <p className="muted">
-            Development discovery uses simulated sources and safe raw local demo
-            HTML only.
+            Browse approved external opportunities reviewed by HirePilot.
           </p>
         </div>
         <span className="count-pill">{externalJobs.length}</span>
       </div>
-
-      {process.env.NODE_ENV !== "production" && (
-        <div className="external-discovery-tools">
-          <button
-            type="button"
-            className="secondary-button small-button development-only-button"
-            onClick={handleRunCrawl4AiDemoDiscovery}
-            disabled={crawl4AiDiscoveryLoading}
-            title="Development only: discover three jobs from hardcoded raw HTML"
-          >
-            {crawl4AiDiscoveryLoading
-              ? "Discovering demo jobs..."
-              : "Run Crawl4AI Demo Discovery"}
-          </button>
-          <span>Local raw HTML only. No external website is contacted.</span>
-        </div>
-      )}
 
       {externalMessage && <div className="notice-banner compact">{externalMessage}</div>}
 

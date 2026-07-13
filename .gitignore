@@ -76,3 +76,11 @@ __pycache__/
 .tmp/
 tmp/
 temp/
+
+
+
+
+# Always include database migration scripts
+!database/
+!database/migrations/
+!database/migrations/*.sql

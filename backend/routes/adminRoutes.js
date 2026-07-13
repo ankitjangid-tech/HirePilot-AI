@@ -8,6 +8,7 @@ const {
   updateRecruiterStatus,
   getExternalJobs,
   reviewExternalJob,
+  runCrawl4AiDemoDiscovery,
 } = require("../controllers/adminController");
 
 router.get(
@@ -36,6 +37,13 @@ router.patch(
   verifyToken,
   authorizeRole("admin"),
   reviewExternalJob
+);
+
+router.post(
+  "/discovery/crawl4ai-demo",
+  verifyToken,
+  authorizeRole("admin"),
+  runCrawl4AiDemoDiscovery
 );
 
 module.exports = router;
