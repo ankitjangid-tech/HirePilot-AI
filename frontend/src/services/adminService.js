@@ -32,6 +32,22 @@ export const getExternalJobsForReview = (token) => {
   return API.get("/admin/external-jobs", authHeaders(token));
 };
 
+export const getExternalSources = (token) => {
+  return API.get("/admin/external-sources", authHeaders(token));
+};
+
+export const createExternalSource = (token, source) => {
+  return API.post("/admin/external-sources", source, authHeaders(token));
+};
+
+export const updateExternalSource = (token, sourceId, updates) => {
+  return API.patch(
+    `/admin/external-sources/${sourceId}`,
+    updates,
+    authHeaders(token)
+  );
+};
+
 export const runCrawl4AiDemoDiscovery = (token) => {
   return API.post(
     "/admin/discovery/crawl4ai-demo",
