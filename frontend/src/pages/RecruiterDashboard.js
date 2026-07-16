@@ -3,6 +3,8 @@ import "../App.css";
 
 import {
   getMyJobs,
+  getCompanyProfile,
+  saveCompanyProfile,
   getApplicants,
   updateStatus,
   scheduleInterview,
@@ -12,10 +14,19 @@ import {
   downloadApplicantResume,
 } from "../services/recruiterService";
 
+const emptyCompanyForm = {
+  company_name: "",
+  company_website: "",
+  industry: "",
+  company_size: "",
+  headquarters_location: "",
+  company_description: "",
+};
+
 const statusClass = (status) =>
   `status-badge status-${String(status || "default")
     .toLowerCase()
-    .replace(/\s+/g, "-")}`;
+    .replace(/[\s_]+/g, "-")}`;
 
 const formatDate = (value) => {
   if (!value) {
@@ -120,9 +131,16 @@ function RecruiterDashboard() {
     status: localStorage.getItem("recruiter_status") || null,
     reason: localStorage.getItem("recruiter_status_reason") || "",
   });
+  const [companyProfile, setCompanyProfile] = useState(null);
+  const [companyForm, setCompanyForm] = useState(emptyCompanyForm);
+  const [companyLoading, setCompanyLoading] = useState(true);
+  const [companySaving, setCompanySaving] = useState(false);
+  const [companyMessage, setCompanyMessage] = useState("");
+  const [companyError, setCompanyError] = useState("");
 
   useEffect(() => {
     fetchJobs();
+    fetchCompany();
   }, []);
 
   const selectedCandidateFromList = useMemo(() => {
@@ -160,6 +178,87 @@ function RecruiterDashboard() {
       setActionMessage("Unable to fetch recruiter jobs");
     } finally {
       setLoadingJobs(false);
+    }
+  };
+
+  const fetchCompany = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setCompanyError("Please sign in again to view your company profile.");
+        return;
+      }
+
+      setCompanyLoading(true);
+      const response = await getCompanyProfile(token);
+      const company = response.data.company || null;
+
+      setCompanyProfile(company);
+      setCompanyForm(
+        company
+          ? {
+              company_name: company.company_name || "",
+              company_website: company.company_website || "",
+              industry: company.industry || "",
+              company_size: company.company_size || "",
+              headquarters_location: company.headquarters_location || "",
+              company_description: company.company_description || "",
+            }
+          : emptyCompanyForm
+      );
+      setCompanyError("");
+    } catch (error) {
+      console.log(
+        "RECRUITER COMPANY FETCH ERROR:",
+        error.response?.data || error.message
+      );
+      setCompanyError(
+        error.response?.data?.error || "Unable to fetch company profile"
+      );
+    } finally {
+      setCompanyLoading(false);
+    }
+  };
+
+  const handleCompanyInputChange = (event) => {
+    const { name, value } = event.target;
+
+    setCompanyForm((currentForm) => ({
+      ...currentForm,
+      [name]: value,
+    }));
+  };
+
+  const handleSaveCompanyProfile = async (event) => {
+    event.preventDefault();
+
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setCompanyError("Please sign in again to save your company profile.");
+        return;
+      }
+
+      setCompanySaving(true);
+      setCompanyMessage("");
+      setCompanyError("");
+
+      const response = await saveCompanyProfile(companyForm, token);
+
+      setCompanyProfile(response.data.company);
+      setCompanyMessage(response.data.message || "Company profile saved.");
+    } catch (error) {
+      console.log(
+        "RECRUITER COMPANY SAVE ERROR:",
+        error.response?.data || error.message
+      );
+      setCompanyError(
+        error.response?.data?.error || "Unable to save company profile"
+      );
+    } finally {
+      setCompanySaving(false);
     }
   };
 
@@ -782,6 +881,159 @@ function RecruiterDashboard() {
           {recruiterApproval.reason && <small>{recruiterApproval.reason}</small>}
         </div>
       )}
+
+      <section className="panel recruiter-company-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Employer Identity</p>
+            <h2>Company Profile</h2>
+            <p className="muted">
+              Company verification helps candidates trust your jobs.
+            </p>
+          </div>
+          <span
+            className={statusClass(
+              companyProfile?.verification_status || "pending"
+            )}
+          >
+            {companyProfile?.verification_status
+              ? companyProfile.verification_status.replace(/_/g, " ")
+              : "Not submitted"}
+          </span>
+        </div>
+
+        {companyProfile?.verification_status === "verified" ? (
+          <div className="company-verification-notice verified" role="status">
+            <strong>Verified company</strong>
+            <span>
+              This company profile has been verified by a HirePilot admin.
+            </span>
+          </div>
+        ) : (
+          <div
+            className={`company-verification-notice ${
+              companyProfile?.verification_status || "pending"
+            }`}
+            role={
+              companyProfile?.verification_status === "rejected"
+                ? "alert"
+                : "status"
+            }
+          >
+            <strong>
+              {companyProfile?.verification_status === "rejected"
+                ? "Company verification rejected"
+                : companyProfile?.verification_status === "needs_review"
+                ? "Company changes need review"
+                : "Company verification pending"}
+            </strong>
+            <span>
+              Your approved recruiter account can continue using existing job
+              posting features, but candidates will not see this company as a
+              verified employer yet.
+            </span>
+          </div>
+        )}
+
+        {companyProfile?.verification_notes && (
+          <div className="company-verification-notes">
+            <strong>Admin verification notes</strong>
+            <p>{companyProfile.verification_notes}</p>
+          </div>
+        )}
+
+        {companyMessage && (
+          <div className="notice-banner compact" role="status">
+            {companyMessage}
+          </div>
+        )}
+        {companyError && (
+          <div className="notice-banner compact admin-error-notice" role="alert">
+            {companyError}
+          </div>
+        )}
+
+        {companyLoading ? (
+          <p className="empty-state">Loading company profile...</p>
+        ) : (
+          <form
+            className="recruiter-company-form"
+            onSubmit={handleSaveCompanyProfile}
+          >
+            <div className="recruiter-company-form-grid">
+              <label>
+                Company name
+                <input
+                  type="text"
+                  name="company_name"
+                  value={companyForm.company_name}
+                  onChange={handleCompanyInputChange}
+                  placeholder="Company name"
+                  required
+                />
+              </label>
+              <label>
+                Company website
+                <input
+                  type="text"
+                  name="company_website"
+                  value={companyForm.company_website}
+                  onChange={handleCompanyInputChange}
+                  placeholder="https://example.com"
+                />
+              </label>
+              <label>
+                Industry
+                <input
+                  type="text"
+                  name="industry"
+                  value={companyForm.industry}
+                  onChange={handleCompanyInputChange}
+                  placeholder="Technology"
+                />
+              </label>
+              <label>
+                Company size
+                <input
+                  type="text"
+                  name="company_size"
+                  value={companyForm.company_size}
+                  onChange={handleCompanyInputChange}
+                  placeholder="51-200 employees"
+                />
+              </label>
+              <label className="recruiter-company-form-wide">
+                Headquarters location
+                <input
+                  type="text"
+                  name="headquarters_location"
+                  value={companyForm.headquarters_location}
+                  onChange={handleCompanyInputChange}
+                  placeholder="Bengaluru, India"
+                />
+              </label>
+              <label className="recruiter-company-form-wide">
+                Company description
+                <textarea
+                  name="company_description"
+                  value={companyForm.company_description}
+                  onChange={handleCompanyInputChange}
+                  placeholder="Describe the company, its work, and its culture."
+                  rows="5"
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={companySaving}
+            >
+              {companySaving ? "Saving Company..." : "Save Company Profile"}
+            </button>
+          </form>
+        )}
+      </section>
 
       <section className="panel">
         <div className="section-heading">

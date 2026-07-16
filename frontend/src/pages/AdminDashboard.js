@@ -8,6 +8,8 @@ import {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getRecruiterCompanies,
+  updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
   reviewExternalJob,
 } from "../services/adminService";
@@ -31,6 +33,7 @@ const externalSourceTypes = [
 const adminTabs = [
   { id: "overview", label: "Overview" },
   { id: "recruiters", label: "Recruiters" },
+  { id: "company-verification", label: "Company Verification" },
   { id: "external-sources", label: "External Sources" },
   { id: "discovery", label: "Discovery" },
   { id: "external-job-review", label: "External Job Review" },
@@ -47,6 +50,23 @@ const formatCreatedDate = (value) => {
   }
 
   return new Date(value).toLocaleString();
+};
+
+const safeCompanyWebsite = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const candidateUrl = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+
+  try {
+    const parsedUrl = new URL(candidateUrl);
+    return ["http:", "https:"].includes(parsedUrl.protocol)
+      ? parsedUrl.toString()
+      : null;
+  } catch (error) {
+    return null;
+  }
 };
 
 const reviewStatusLabel = (status) =>
@@ -79,6 +99,14 @@ function AdminDashboard() {
   const [busySourceId, setBusySourceId] = useState(null);
   const [sourceMessage, setSourceMessage] = useState("");
   const [sourceError, setSourceError] = useState("");
+  const [companies, setCompanies] = useState([]);
+  const [companiesLoading, setCompaniesLoading] = useState(true);
+  const [busyCompanyId, setBusyCompanyId] = useState(null);
+  const [savingCompanyNotesId, setSavingCompanyNotesId] = useState(null);
+  const [companyNotes, setCompanyNotes] = useState({});
+  const [companyNotesFeedback, setCompanyNotesFeedback] = useState({});
+  const [companyMessage, setCompanyMessage] = useState("");
+  const [companyError, setCompanyError] = useState("");
 
   const statusCounts = useMemo(
     () =>
@@ -106,6 +134,19 @@ function AdminDashboard() {
     [externalJobs]
   );
 
+  const companyVerificationCounts = useMemo(
+    () =>
+      companies.reduce(
+        (counts, company) => {
+          const status = company.verification_status || "pending";
+          counts[status] = (counts[status] || 0) + 1;
+          return counts;
+        },
+        { pending: 0, verified: 0, rejected: 0, needs_review: 0 }
+      ),
+    [companies]
+  );
+
   const crawl4AiDemoSource = useMemo(
     () =>
       externalSources.find((source) => source.source_key === "crawl4ai_demo") ||
@@ -122,6 +163,7 @@ function AdminDashboard() {
     fetchRecruiters();
     fetchExternalJobs();
     fetchExternalSources();
+    fetchCompanies();
   }, []);
 
   const fetchRecruiters = async () => {
@@ -215,6 +257,153 @@ function AdminDashboard() {
       );
     } finally {
       setExternalSourcesLoading(false);
+    }
+  };
+
+  const fetchCompanies = async () => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setCompaniesLoading(false);
+        return;
+      }
+
+      setCompaniesLoading(true);
+      const response = await getRecruiterCompanies(token);
+      const rows = response.data.companies || [];
+
+      setCompanies(rows);
+      setCompanyNotes(
+        rows.reduce((notes, company) => {
+          notes[company.company_id] = company.verification_notes || "";
+          return notes;
+        }, {})
+      );
+      setCompanyError("");
+    } catch (requestError) {
+      console.log(
+        "ADMIN COMPANY FETCH ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setCompanyError(
+        requestError.response?.data?.error ||
+          "Unable to fetch recruiter company profiles"
+      );
+    } finally {
+      setCompaniesLoading(false);
+    }
+  };
+
+  const handleCompanyVerification = async (
+    companyId,
+    verificationStatus,
+    notes = undefined
+  ) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setCompanyError("Please sign in again to review this company.");
+        return;
+      }
+
+      setBusyCompanyId(companyId);
+      setCompanyNotesFeedback((currentFeedback) => ({
+        ...currentFeedback,
+        [companyId]: null,
+      }));
+      setCompanyMessage("");
+      setCompanyError("");
+
+      const response = await updateCompanyVerification(
+        token,
+        companyId,
+        verificationStatus,
+        notes
+      );
+      const updatedCompany = response.data.company;
+
+      setCompanies((currentCompanies) =>
+        currentCompanies.map((company) =>
+          company.company_id === companyId
+            ? { ...company, ...updatedCompany }
+            : company
+        )
+      );
+      setCompanyNotes((currentNotes) => ({
+        ...currentNotes,
+        [companyId]: updatedCompany.verification_notes || "",
+      }));
+      setCompanyMessage(
+        response.data.message || "Company verification updated."
+      );
+    } catch (requestError) {
+      console.log(
+        "ADMIN COMPANY VERIFICATION ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setCompanyError(
+        requestError.response?.data?.error ||
+          "Unable to update company verification"
+      );
+    } finally {
+      setBusyCompanyId(null);
+    }
+  };
+
+  const handleSaveCompanyNotes = async (companyId) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setCompanyNotesFeedback((currentFeedback) => ({
+          ...currentFeedback,
+          [companyId]: {
+            type: "error",
+            message: "Please sign in again to save company verification notes.",
+          },
+        }));
+        return;
+      }
+
+      setSavingCompanyNotesId(companyId);
+      setCompanyNotesFeedback((currentFeedback) => ({
+        ...currentFeedback,
+        [companyId]: null,
+      }));
+
+      await updateCompanyVerification(
+        token,
+        companyId,
+        undefined,
+        companyNotes[companyId] || ""
+      );
+      await fetchCompanies();
+
+      setCompanyNotesFeedback((currentFeedback) => ({
+        ...currentFeedback,
+        [companyId]: {
+          type: "success",
+          message: "Company verification notes saved.",
+        },
+      }));
+    } catch (requestError) {
+      console.log(
+        "ADMIN COMPANY NOTES SAVE ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setCompanyNotesFeedback((currentFeedback) => ({
+        ...currentFeedback,
+        [companyId]: {
+          type: "error",
+          message:
+            requestError.response?.data?.error ||
+            "Unable to save company verification notes.",
+        },
+      }));
+    } finally {
+      setSavingCompanyNotesId(null);
     }
   };
 
@@ -435,6 +624,7 @@ function AdminDashboard() {
       fetchRecruiters(),
       fetchExternalJobs(),
       fetchExternalSources(),
+      fetchCompanies(),
     ]);
     setRefreshing(false);
   };
@@ -545,6 +735,31 @@ function AdminDashboard() {
               <article className="blocked">
                 <span>Blocked recruiters</span>
                 <strong>{statusCounts.blocked}</strong>
+              </article>
+            </div>
+          </div>
+
+          <div className="admin-overview-group">
+            <h3>Company verification</h3>
+            <div
+              className="admin-summary-grid"
+              aria-label="Company verification summary"
+            >
+              <article className="pending">
+                <span>Pending companies</span>
+                <strong>{companyVerificationCounts.pending}</strong>
+              </article>
+              <article className="approved">
+                <span>Verified companies</span>
+                <strong>{companyVerificationCounts.verified}</strong>
+              </article>
+              <article className="blocked">
+                <span>Rejected companies</span>
+                <strong>{companyVerificationCounts.rejected}</strong>
+              </article>
+              <article className="pending">
+                <span>Needs review</span>
+                <strong>{companyVerificationCounts.needs_review}</strong>
               </article>
             </div>
           </div>
@@ -663,6 +878,220 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === "company-verification" && (
+        <section
+          className="panel admin-company-verification-panel"
+          id="admin-tabpanel-company-verification"
+          role="tabpanel"
+          aria-labelledby="admin-tab-company-verification"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Employer Trust</p>
+              <h2>Company Verification</h2>
+              <p className="muted">
+                Review recruiter company profiles before HirePilot treats them
+                as verified employers.
+              </p>
+            </div>
+            <span className="count-pill">{companies.length}</span>
+          </div>
+
+          {companyMessage && (
+            <div className="notice-banner compact" role="status">
+              {companyMessage}
+            </div>
+          )}
+          {companyError && (
+            <div
+              className="notice-banner compact admin-error-notice"
+              role="alert"
+            >
+              {companyError}
+            </div>
+          )}
+
+          {companiesLoading ? (
+            <p className="empty-state">Loading company profiles...</p>
+          ) : companies.length === 0 ? (
+            <p className="empty-state">
+              No recruiter company profiles have been submitted.
+            </p>
+          ) : (
+            <div className="admin-company-list">
+              {companies.map((company) => {
+                const companyVerificationBusy =
+                  busyCompanyId === company.company_id;
+                const companyNotesSaving =
+                  savingCompanyNotesId === company.company_id;
+                const companyBusy =
+                  companyVerificationBusy || companyNotesSaving;
+                const notesFeedback =
+                  companyNotesFeedback[company.company_id];
+                const websiteUrl = safeCompanyWebsite(company.company_website);
+
+                return (
+                  <article
+                    className="admin-company-card"
+                    key={company.company_id}
+                  >
+                    <div className="admin-company-card-header">
+                      <div>
+                        <span className={statusClass(company.verification_status)}>
+                          {String(
+                            company.verification_status || "pending"
+                          ).replace(/_/g, " ")}
+                        </span>
+                        <h3>{company.company_name}</h3>
+                        <p>
+                          {company.recruiter_name || "Recruiter"} · {company.recruiter_email}
+                        </p>
+                      </div>
+                      <div className="admin-recruiter-date">
+                        <span>Updated</span>
+                        <strong>{formatCreatedDate(company.updated_at)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="admin-company-meta">
+                      <span>{company.industry || "Industry not added"}</span>
+                      <span>{company.company_size || "Size not added"}</span>
+                      <span>
+                        {company.headquarters_location || "Location not added"}
+                      </span>
+                    </div>
+
+                    <div className="admin-company-details">
+                      <div>
+                        <span>Website</span>
+                        {websiteUrl ? (
+                          <a href={websiteUrl} target="_blank" rel="noreferrer">
+                            {company.company_website}
+                          </a>
+                        ) : (
+                          <strong>{company.company_website || "Not added"}</strong>
+                        )}
+                      </div>
+                      <div>
+                        <span>Description</span>
+                        <p>{company.company_description || "Not added"}</p>
+                      </div>
+                    </div>
+
+                    <label className="admin-review-notes">
+                      Verification notes
+                      <textarea
+                        value={companyNotes[company.company_id] || ""}
+                        onChange={(event) =>
+                          setCompanyNotes((currentNotes) => ({
+                            ...currentNotes,
+                            [company.company_id]: event.target.value,
+                          }))
+                        }
+                        placeholder="Internal verification notes shared with the recruiter"
+                        rows="3"
+                      />
+                    </label>
+
+                    <div className="admin-company-actions">
+                      <button
+                        type="button"
+                        className="primary-button small-button"
+                        onClick={() =>
+                          handleCompanyVerification(
+                            company.company_id,
+                            "verified",
+                            companyNotes[company.company_id]
+                          )
+                        }
+                        disabled={
+                          companyBusy || company.verification_status === "verified"
+                        }
+                      >
+                        Verify
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button small-button"
+                        onClick={() =>
+                          handleCompanyVerification(
+                            company.company_id,
+                            "rejected",
+                            companyNotes[company.company_id]
+                          )
+                        }
+                        disabled={
+                          companyBusy || company.verification_status === "rejected"
+                        }
+                      >
+                        Reject
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button small-button"
+                        onClick={() =>
+                          handleCompanyVerification(
+                            company.company_id,
+                            "needs_review",
+                            companyNotes[company.company_id]
+                          )
+                        }
+                        disabled={
+                          companyBusy ||
+                          company.verification_status === "needs_review"
+                        }
+                      >
+                        Mark Needs Review
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button small-button"
+                        onClick={() =>
+                          handleCompanyVerification(
+                            company.company_id,
+                            "pending",
+                            companyNotes[company.company_id]
+                          )
+                        }
+                        disabled={
+                          companyBusy || company.verification_status === "pending"
+                        }
+                      >
+                        Mark Pending
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button small-button"
+                        onClick={() =>
+                          handleSaveCompanyNotes(company.company_id)
+                        }
+                        disabled={companyBusy}
+                      >
+                        {companyNotesSaving ? "Saving Notes..." : "Save Notes"}
+                      </button>
+                    </div>
+                    {notesFeedback && (
+                      <div
+                        className={`notice-banner compact${
+                          notesFeedback.type === "error"
+                            ? " admin-error-notice"
+                            : ""
+                        }`}
+                        role={
+                          notesFeedback.type === "error" ? "alert" : "status"
+                        }
+                      >
+                        {notesFeedback.message}
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
       )}
 
       {activeTab === "external-sources" && (

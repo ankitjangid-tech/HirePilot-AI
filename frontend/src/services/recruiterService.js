@@ -14,6 +14,14 @@ export const getMyJobs = (token) => {
   return API.get("/recruiter/my-jobs", authHeaders(token));
 };
 
+export const getCompanyProfile = (token) => {
+  return API.get("/recruiter/company", authHeaders(token));
+};
+
+export const saveCompanyProfile = (company, token) => {
+  return API.put("/recruiter/company", company, authHeaders(token));
+};
+
 export const getApplicants = (jobId, token) => {
   return API.get(`/recruiter-ranking/${jobId}`, authHeaders(token));
 };

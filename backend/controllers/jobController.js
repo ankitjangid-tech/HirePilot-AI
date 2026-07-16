@@ -16,6 +16,19 @@ const createJob = async(req,res)=>{
             location
         } = req.body;
 
+        const companyResult = await pool.query(
+        `SELECT verification_status
+         FROM recruiter_companies
+         WHERE recruiter_id = $1`,
+        [recruiter_id]
+        );
+        const companyVerificationStatus =
+        companyResult.rows[0]?.verification_status || "pending";
+        const companyVerificationWarning =
+        companyVerificationStatus === "verified"
+        ? null
+        : "Company profile is not verified yet. Company verification helps candidates trust your jobs.";
+
         const result = await pool.query(
 
         `INSERT INTO jobs
@@ -49,7 +62,9 @@ const createJob = async(req,res)=>{
 
         res.status(201).json({
             message:"Job Created Successfully",
-            job:result.rows[0]
+            job:result.rows[0],
+            company_verification_status:companyVerificationStatus,
+            company_verification_warning:companyVerificationWarning
         });
 
     }

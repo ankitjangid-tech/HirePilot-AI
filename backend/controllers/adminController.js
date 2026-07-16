@@ -17,6 +17,12 @@ const EXTERNAL_SOURCE_TYPES = [
   "job_board",
 ];
 const EXTERNAL_SOURCE_TRUST_STATUSES = ["pending", "approved", "blocked"];
+const COMPANY_VERIFICATION_STATUSES = [
+  "pending",
+  "verified",
+  "rejected",
+  "needs_review",
+];
 
 const optionalText = (value) => {
   if (value === null || value === undefined) {
@@ -420,6 +426,137 @@ const updateExternalSource = async (req, res) => {
   }
 };
 
+const getRecruiterCompanies = async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        rc.company_id,
+        rc.recruiter_id,
+        rc.company_name,
+        rc.company_website,
+        rc.industry,
+        rc.company_size,
+        rc.headquarters_location,
+        rc.company_description,
+        rc.verification_status,
+        rc.verification_notes,
+        rc.verified_by,
+        rc.verified_at,
+        rc.created_at,
+        rc.updated_at,
+        recruiter.full_name AS recruiter_name,
+        recruiter.email AS recruiter_email,
+        verifier.full_name AS verified_by_name
+       FROM recruiter_companies rc
+       JOIN users recruiter
+       ON recruiter.user_id = rc.recruiter_id
+       LEFT JOIN users verifier
+       ON verifier.user_id = rc.verified_by
+       ORDER BY
+         CASE rc.verification_status
+           WHEN 'needs_review' THEN 1
+           WHEN 'pending' THEN 2
+           WHEN 'rejected' THEN 3
+           ELSE 4
+         END,
+         rc.updated_at DESC,
+         rc.company_id DESC`
+    );
+
+    return res.status(200).json({
+      companies: result.rows,
+      total: result.rows.length,
+    });
+  } catch (error) {
+    console.log("ADMIN COMPANY LIST ERROR:", error.message);
+
+    return res.status(500).json({
+      error: "Unable to fetch recruiter company profiles",
+    });
+  }
+};
+
+const updateCompanyVerification = async (req, res) => {
+  try {
+    const companyId = Number(req.params.companyId);
+    const isNotesOnlyUpdate =
+      req.body.verification_status === undefined &&
+      req.body.verification_notes !== undefined;
+    const updates = [];
+    const values = [companyId];
+
+    if (!companyId) {
+      return res.status(400).json({
+        error: "Valid company id is required",
+      });
+    }
+
+    if (req.body.verification_status !== undefined) {
+      const verificationStatus = String(
+        req.body.verification_status
+      ).trim().toLowerCase();
+
+      if (!COMPANY_VERIFICATION_STATUSES.includes(verificationStatus)) {
+        return res.status(400).json({
+          error:
+            "Verification status must be pending, verified, rejected, or needs_review",
+        });
+      }
+
+      values.push(verificationStatus);
+      updates.push(`verification_status = $${values.length}`);
+
+      if (verificationStatus === "verified") {
+        values.push(req.user.user_id);
+        updates.push(`verified_by = $${values.length}`);
+        updates.push("verified_at = CURRENT_TIMESTAMP");
+      } else {
+        updates.push("verified_by = NULL");
+        updates.push("verified_at = NULL");
+      }
+    }
+
+    if (req.body.verification_notes !== undefined) {
+      values.push(optionalText(req.body.verification_notes));
+      updates.push(`verification_notes = $${values.length}`);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        error: "Provide verification_status or verification_notes to update",
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE recruiter_companies
+       SET ${updates.join(", ")},
+           updated_at = CURRENT_TIMESTAMP
+       WHERE company_id = $1
+       RETURNING *`,
+      values
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Recruiter company profile not found",
+      });
+    }
+
+    return res.status(200).json({
+      message: isNotesOnlyUpdate
+        ? "Company verification notes saved."
+        : "Company verification updated.",
+      company: result.rows[0],
+    });
+  } catch (error) {
+    console.log("ADMIN COMPANY VERIFICATION ERROR:", error.message);
+
+    return res.status(500).json({
+      error: "Unable to update company verification",
+    });
+  }
+};
+
 const runCrawl4AiDemoDiscovery = async (req, res) => {
   const sendJson = res.json.bind(res);
 
@@ -467,5 +604,7 @@ module.exports = {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getRecruiterCompanies,
+  updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
 };

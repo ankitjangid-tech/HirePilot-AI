@@ -48,6 +48,33 @@ export const updateExternalSource = (token, sourceId, updates) => {
   );
 };
 
+export const getRecruiterCompanies = (token) => {
+  return API.get("/admin/companies", authHeaders(token));
+};
+
+export const updateCompanyVerification = (
+  token,
+  companyId,
+  verificationStatus,
+  verificationNotes
+) => {
+  const payload = {};
+
+  if (verificationStatus !== undefined) {
+    payload.verification_status = verificationStatus;
+  }
+
+  if (verificationNotes !== undefined) {
+    payload.verification_notes = verificationNotes || null;
+  }
+
+  return API.patch(
+    `/admin/companies/${companyId}/verification`,
+    payload,
+    authHeaders(token)
+  );
+};
+
 export const runCrawl4AiDemoDiscovery = (token) => {
   return API.post(
     "/admin/discovery/crawl4ai-demo",
