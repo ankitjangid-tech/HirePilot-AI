@@ -28,6 +28,14 @@ const externalSourceTypes = [
   { value: "job_board", label: "Job board" },
 ];
 
+const adminTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "recruiters", label: "Recruiters" },
+  { id: "external-sources", label: "External Sources" },
+  { id: "discovery", label: "Discovery" },
+  { id: "external-job-review", label: "External Job Review" },
+];
+
 const statusClass = (status) =>
   `status-badge status-${String(status || "pending")
     .toLowerCase()
@@ -47,6 +55,7 @@ const reviewStatusLabel = (status) =>
     : String(status || "approved").replace(/_/g, " ");
 
 function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState("overview");
   const [recruiters, setRecruiters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -107,6 +116,7 @@ function AdminDashboard() {
     crawl4AiDemoSource?.is_enabled &&
       crawl4AiDemoSource?.trust_status === "approved"
   );
+  const crawl4AiDemoAvailable = process.env.NODE_ENV !== "production";
 
   useEffect(() => {
     fetchRecruiters();
@@ -429,6 +439,32 @@ function AdminDashboard() {
     setRefreshing(false);
   };
 
+  const handleAdminTabKeyDown = (event, tabIndex) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    let nextIndex = tabIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = (tabIndex + 1) % adminTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex = (tabIndex - 1 + adminTabs.length) % adminTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = adminTabs.length - 1;
+    }
+
+    const nextTab = adminTabs[nextIndex];
+    setActiveTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`admin-tab-${nextTab.id}`)?.focus();
+    });
+  };
+
   return (
     <main className="dashboard-shell admin-dashboard">
       <section className="dashboard-hero admin-hero">
@@ -450,29 +486,110 @@ function AdminDashboard() {
         </button>
       </section>
 
-      <section className="admin-summary-grid" aria-label="Recruiter summary">
-        <article>
-          <span>Total recruiters</span>
-          <strong>{recruiters.length}</strong>
-        </article>
-        <article className="pending">
-          <span>Pending</span>
-          <strong>{statusCounts.pending}</strong>
-        </article>
-        <article className="approved">
-          <span>Approved</span>
-          <strong>{statusCounts.approved}</strong>
-        </article>
-        <article className="blocked">
-          <span>Blocked</span>
-          <strong>{statusCounts.blocked}</strong>
-        </article>
-      </section>
+      <nav className="admin-tab-shell" aria-label="Admin control panel">
+        <div className="admin-tab-list" role="tablist">
+          {adminTabs.map((tab, tabIndex) => (
+            <button
+              type="button"
+              role="tab"
+              id={`admin-tab-${tab.id}`}
+              className={`admin-tab-button ${
+                activeTab === tab.id ? "active" : ""
+              }`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`admin-tabpanel-${tab.id}`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) => handleAdminTabKeyDown(event, tabIndex)}
+              key={tab.id}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {activeTab === "overview" && (
+        <section
+          className="panel admin-overview-panel"
+          id="admin-tabpanel-overview"
+          role="tabpanel"
+          aria-labelledby="admin-tab-overview"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Control Panel Overview</p>
+              <h2>Platform Administration</h2>
+              <p className="muted">
+                Monitor recruiter access, discovery governance, and external job
+                moderation from one place.
+              </p>
+            </div>
+          </div>
+
+          <div className="admin-overview-group">
+            <h3>Recruiter access</h3>
+            <div className="admin-summary-grid" aria-label="Recruiter summary">
+              <article>
+                <span>Total recruiters</span>
+                <strong>{recruiters.length}</strong>
+              </article>
+              <article className="pending">
+                <span>Pending recruiters</span>
+                <strong>{statusCounts.pending}</strong>
+              </article>
+              <article className="approved">
+                <span>Approved recruiters</span>
+                <strong>{statusCounts.approved}</strong>
+              </article>
+              <article className="blocked">
+                <span>Blocked recruiters</span>
+                <strong>{statusCounts.blocked}</strong>
+              </article>
+            </div>
+          </div>
+
+          <div className="admin-overview-group">
+            <h3>External discovery governance</h3>
+            <div
+              className="admin-summary-grid admin-governance-summary-grid"
+              aria-label="External discovery summary"
+            >
+              <article>
+                <span>External sources</span>
+                <strong>{externalSources.length}</strong>
+              </article>
+              <article className="pending">
+                <span>Jobs pending review</span>
+                <strong>{reviewCounts.pending_review}</strong>
+              </article>
+              <article className="approved">
+                <span>Approved jobs</span>
+                <strong>{reviewCounts.approved}</strong>
+              </article>
+              <article className="hidden">
+                <span>Hidden jobs</span>
+                <strong>{reviewCounts.hidden}</strong>
+              </article>
+              <article className="blocked">
+                <span>Rejected jobs</span>
+                <strong>{reviewCounts.rejected}</strong>
+              </article>
+            </div>
+          </div>
+        </section>
+      )}
 
       {message && <div className="notice-banner">{message}</div>}
       {error && <div className="notice-banner admin-error-notice">{error}</div>}
 
-      <section className="panel admin-recruiter-panel">
+      {activeTab === "recruiters" && (
+      <section
+        className="panel admin-recruiter-panel"
+        id="admin-tabpanel-recruiters"
+        role="tabpanel"
+        aria-labelledby="admin-tab-recruiters"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Access Control</p>
@@ -546,8 +663,15 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+      )}
 
-      <section className="panel admin-external-sources-panel">
+      {activeTab === "external-sources" && (
+      <section
+        className="panel admin-external-sources-panel"
+        id="admin-tabpanel-external-sources"
+        role="tabpanel"
+        aria-labelledby="admin-tab-external-sources"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Source Governance</p>
@@ -820,9 +944,15 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+      )}
 
-      {process.env.NODE_ENV !== "production" && (
-        <section className="panel admin-discovery-operations-panel">
+      {activeTab === "discovery" && (
+        <section
+          className="panel admin-discovery-operations-panel"
+          id="admin-tabpanel-discovery"
+          role="tabpanel"
+          aria-labelledby="admin-tab-discovery"
+        >
           <div className="section-heading">
             <div>
               <p className="eyebrow">Discovery Operations</p>
@@ -838,7 +968,9 @@ function AdminDashboard() {
             <div>
               <strong>Crawl4AI demo discovery</strong>
               <p>
-                {externalSourcesLoading
+                {!crawl4AiDemoAvailable
+                  ? "Safe demo discovery is available only in development mode."
+                  : externalSourcesLoading
                   ? "Checking source allowlist..."
                   : crawl4AiDemoAllowed
                   ? "Safe raw local demo HTML only. No external website is contacted."
@@ -851,6 +983,7 @@ function AdminDashboard() {
               onClick={handleRunCrawl4AiDemoDiscovery}
               disabled={
                 discoveryLoading ||
+                !crawl4AiDemoAvailable ||
                 externalSourcesLoading ||
                 !crawl4AiDemoAllowed
               }
@@ -877,29 +1010,13 @@ function AdminDashboard() {
         </section>
       )}
 
+      {activeTab === "external-job-review" && (
       <section
-        className="admin-summary-grid external-review-summary-grid"
-        aria-label="External job review summary"
+        className="panel admin-external-review-panel"
+        id="admin-tabpanel-external-job-review"
+        role="tabpanel"
+        aria-labelledby="admin-tab-external-job-review"
       >
-        <article className="pending">
-          <span>Pending review</span>
-          <strong>{reviewCounts.pending_review}</strong>
-        </article>
-        <article className="approved">
-          <span>Approved</span>
-          <strong>{reviewCounts.approved}</strong>
-        </article>
-        <article className="hidden">
-          <span>Hidden</span>
-          <strong>{reviewCounts.hidden}</strong>
-        </article>
-        <article className="blocked">
-          <span>Rejected</span>
-          <strong>{reviewCounts.rejected}</strong>
-        </article>
-      </section>
-
-      <section className="panel admin-external-review-panel">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Discovery Moderation</p>
@@ -1031,6 +1148,7 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+      )}
     </main>
   );
 }
