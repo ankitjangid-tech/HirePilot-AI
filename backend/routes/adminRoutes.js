@@ -11,6 +11,8 @@ const {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getRecruiterCompanies,
+  updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
 } = require("../controllers/adminController");
 
@@ -61,6 +63,20 @@ router.patch(
   verifyToken,
   authorizeRole("admin"),
   updateExternalSource
+);
+
+router.get(
+  "/companies",
+  verifyToken,
+  authorizeRole("admin"),
+  getRecruiterCompanies
+);
+
+router.patch(
+  "/companies/:companyId/verification",
+  verifyToken,
+  authorizeRole("admin"),
+  updateCompanyVerification
 );
 
 router.post(

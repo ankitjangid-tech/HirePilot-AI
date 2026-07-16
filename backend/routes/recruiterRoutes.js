@@ -10,8 +10,24 @@ authorizeRole
 }=require("../middleware/roleMiddleware");
 const {
 getApplicants,
-getApplicantsByJob
+getApplicantsByJob,
+getCompanyProfile,
+upsertCompanyProfile
 }=require("../controllers/recruiterController");
+
+router.get(
+"/company",
+verifyToken,
+authorizeRole("recruiter"),
+getCompanyProfile
+);
+
+router.put(
+"/company",
+verifyToken,
+authorizeRole("recruiter"),
+upsertCompanyProfile
+);
 
 router.get(
 "/applicants",

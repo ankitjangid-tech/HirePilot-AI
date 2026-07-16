@@ -79,7 +79,7 @@ button:disabled {
 
 .admin-tab-list {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
   min-width: 0;
 }
@@ -381,6 +381,210 @@ button:disabled {
   color: var(--danger);
 }
 
+.status-verified {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.status-needs-review {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.status-rejected {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.recruiter-company-panel {
+  border-color: #c7d2fe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8faff 100%);
+}
+
+.company-verification-notice {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  line-height: 1.5;
+}
+
+.company-verification-notice.verified {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.company-verification-notice.rejected {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.company-verification-notice.needs_review {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.company-verification-notes {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.company-verification-notes p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.recruiter-company-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.recruiter-company-form-grid label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.recruiter-company-form-grid input,
+.recruiter-company-form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  text-transform: none;
+}
+
+.recruiter-company-form-grid textarea {
+  resize: vertical;
+}
+
+.recruiter-company-form-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-company-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-company-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.admin-company-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.admin-company-card-header > div {
+  min-width: 0;
+}
+
+.admin-company-card-header h3 {
+  margin: 10px 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.admin-company-card-header p {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-company-meta,
+.admin-company-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-company-meta {
+  margin-top: 13px;
+}
+
+.admin-company-meta span {
+  max-width: 100%;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-company-details {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.admin-company-details > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-company-details span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.admin-company-details a,
+.admin-company-details strong,
+.admin-company-details p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-company-details a {
+  color: var(--primary-dark);
+}
+
+.admin-company-actions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .admin-recruiter-list {
   display: grid;
   gap: 12px;
@@ -617,19 +821,24 @@ button:disabled {
   }
 
   .admin-source-form-grid,
-  .admin-source-list {
+  .admin-source-list,
+  .recruiter-company-form-grid,
+  .admin-company-list {
     grid-template-columns: 1fr;
   }
 
-  .admin-source-form-wide {
+  .admin-source-form-wide,
+  .recruiter-company-form-wide {
     grid-column: auto;
   }
 
-  .admin-source-card-header {
+  .admin-source-card-header,
+  .admin-company-card-header {
     flex-direction: column;
   }
 
-  .admin-source-actions {
+  .admin-source-actions,
+  .admin-company-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
