@@ -667,6 +667,7 @@ const getMatchedExternalJobs = async (req, res) => {
         ej.location,
         ej.salary,
         ej.apply_mode,
+        ej.review_status,
         ea.external_application_id,
         ea.application_status,
         ea.failure_reason,

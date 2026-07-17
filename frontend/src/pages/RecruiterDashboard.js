@@ -28,6 +28,18 @@ const statusClass = (status) =>
     .toLowerCase()
     .replace(/[\s_]+/g, "-")}`;
 
+const employerTrustBadge = (verificationStatus) => {
+  if (verificationStatus === "verified") {
+    return { label: "Verified Employer", className: "verified" };
+  }
+
+  if (["pending", "needs_review"].includes(verificationStatus)) {
+    return { label: "Verification Pending", className: "pending" };
+  }
+
+  return { label: "Company Not Verified", className: "unverified" };
+};
+
 const formatDate = (value) => {
   if (!value) {
     return "Not available";
@@ -1050,30 +1062,45 @@ function RecruiterDashboard() {
           <p className="empty-state">No jobs posted yet.</p>
         ) : (
           <div className="card-grid">
-            {jobs.map((job) => (
-              <article
-                className={
-                  currentJobId === job.job_id ? "item-card selected" : "item-card"
-                }
-                key={job.job_id}
-              >
-                <div>
-                  <h3>{job.job_title}</h3>
-                  <p>{job.company_name}</p>
-                  <div className="chip-row">
-                    <span className="chip">{job.required_skills}</span>
-                    <span className="chip">{job.salary}</span>
-                  </div>
-                </div>
+            {jobs.map((job) => {
+              const trustBadge = employerTrustBadge(
+                job.company_verification_status
+              );
 
-                <button
-                  className="secondary-button"
-                  onClick={() => fetchApplicants(job.job_id, job.job_title)}
+              return (
+                <article
+                  className={
+                    currentJobId === job.job_id
+                      ? "item-card selected job-trust-card"
+                      : "item-card job-trust-card"
+                  }
+                  key={job.job_id}
                 >
-                  View Applicants
-                </button>
-              </article>
-            ))}
+                  <div>
+                    <h3>{job.job_title}</h3>
+                    <p>{job.company_name}</p>
+                    <div className="job-trust-row">
+                      <span
+                        className={`trust-badge trust-badge-${trustBadge.className}`}
+                      >
+                        {trustBadge.label}
+                      </span>
+                    </div>
+                    <div className="chip-row">
+                      <span className="chip">{job.required_skills}</span>
+                      <span className="chip">{job.salary}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    className="secondary-button"
+                    onClick={() => fetchApplicants(job.job_id, job.job_title)}
+                  >
+                    View Applicants
+                  </button>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

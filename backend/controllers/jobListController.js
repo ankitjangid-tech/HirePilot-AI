@@ -7,14 +7,17 @@ try{
 const result=await pool.query(
 
 `SELECT
-job_id,
-job_title,
-company_name,
-required_skills,
-experience_required,
-salary
+j.job_id,
+j.job_title,
+j.company_name,
+j.required_skills,
+j.experience_required,
+j.salary,
+rc.verification_status AS company_verification_status
 
-FROM jobs`
+FROM jobs j
+LEFT JOIN recruiter_companies rc
+ON rc.recruiter_id = j.recruiter_id`
 
 );
 
