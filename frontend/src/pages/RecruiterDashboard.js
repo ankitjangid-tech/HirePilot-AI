@@ -23,6 +23,25 @@ const emptyCompanyForm = {
   company_description: "",
 };
 
+const emptyJobForm = {
+  job_title: "",
+  company_name: "",
+  job_description: "",
+  required_skills: "",
+  experience_required: "",
+  salary: "",
+  location: "",
+};
+
+const recruiterTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "company-profile", label: "Company Profile" },
+  { id: "post-job", label: "Post Job" },
+  { id: "my-jobs", label: "My Jobs" },
+  { id: "applicants", label: "Applicants" },
+  { id: "interviews", label: "Interviews" },
+];
+
 const statusClass = (status) =>
   `status-badge status-${String(status || "default")
     .toLowerCase()
@@ -127,6 +146,7 @@ const downloadPdfBlob = (blob, filename) => {
 };
 
 function RecruiterDashboard() {
+  const [activeTab, setActiveTab] = useState("overview");
   const [jobs, setJobs] = useState([]);
   const [applicants, setApplicants] = useState([]);
   const [currentJobId, setCurrentJobId] = useState(null);
@@ -149,6 +169,8 @@ function RecruiterDashboard() {
   const [companySaving, setCompanySaving] = useState(false);
   const [companyMessage, setCompanyMessage] = useState("");
   const [companyError, setCompanyError] = useState("");
+  const [jobForm, setJobForm] = useState(emptyJobForm);
+  const [postingJob, setPostingJob] = useState(false);
 
   useEffect(() => {
     fetchJobs();
@@ -167,6 +189,33 @@ function RecruiterDashboard() {
       ) || selectedCandidate
     );
   }, [applicants, selectedCandidate]);
+
+  const shortlistedApplicantCount = useMemo(
+    () =>
+      applicants.filter(
+        (candidate) => candidate.application_status === "Shortlisted"
+      ).length,
+    [applicants]
+  );
+
+  const scheduledInterviewCount = useMemo(
+    () =>
+      applicants.filter(
+        (candidate) =>
+          candidate.has_interview && candidate.interview_status !== "Cancelled"
+      ).length,
+    [applicants]
+  );
+
+  const interviewCandidates = useMemo(
+    () =>
+      applicants.filter(
+        (candidate) =>
+          candidate.application_status === "Shortlisted" ||
+          candidate.has_interview
+      ),
+    [applicants]
+  );
 
   const fetchJobs = async () => {
     try {
@@ -219,6 +268,10 @@ function RecruiterDashboard() {
             }
           : emptyCompanyForm
       );
+      setJobForm((currentForm) => ({
+        ...currentForm,
+        company_name: currentForm.company_name || company?.company_name || "",
+      }));
       setCompanyError("");
     } catch (error) {
       console.log(
@@ -260,6 +313,11 @@ function RecruiterDashboard() {
       const response = await saveCompanyProfile(companyForm, token);
 
       setCompanyProfile(response.data.company);
+      setJobForm((currentForm) => ({
+        ...currentForm,
+        company_name:
+          currentForm.company_name || response.data.company?.company_name || "",
+      }));
       setCompanyMessage(response.data.message || "Company profile saved.");
     } catch (error) {
       console.log(
@@ -271,6 +329,70 @@ function RecruiterDashboard() {
       );
     } finally {
       setCompanySaving(false);
+    }
+  };
+
+  const handleJobInputChange = (event) => {
+    const { name, value } = event.target;
+
+    setJobForm((currentForm) => ({
+      ...currentForm,
+      [name]: value,
+    }));
+  };
+
+  const handlePostJob = async (event) => {
+    event.preventDefault();
+
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setActionMessage("Please login again to post a job");
+        return;
+      }
+
+      if (recruiterApproval.status !== "approved") {
+        setActionMessage(
+          recruiterApproval.status === "blocked"
+            ? "Recruiter account is blocked. Contact admin."
+            : "Recruiter account is pending admin approval."
+        );
+        return;
+      }
+
+      setPostingJob(true);
+      setActionMessage("");
+
+      const response = await fetch("http://localhost:5000/api/jobs/create", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...jobForm,
+          experience_required: Number(jobForm.experience_required),
+        }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to post job");
+      }
+
+      setJobForm({
+        ...emptyJobForm,
+        company_name: companyProfile?.company_name || jobForm.company_name,
+      });
+      setActionMessage(data.message || "Job posted successfully.");
+      await fetchJobs();
+      setActiveTab("my-jobs");
+    } catch (error) {
+      console.log("POST JOB ERROR:", error.message);
+      setActionMessage(error.message || "Unable to post job");
+    } finally {
+      setPostingJob(false);
     }
   };
 
@@ -307,6 +429,11 @@ function RecruiterDashboard() {
     } finally {
       setLoadingApplicants(false);
     }
+  };
+
+  const handleViewApplicants = async (jobId, jobTitle) => {
+    await fetchApplicants(jobId, jobTitle);
+    setActiveTab("applicants");
   };
 
   const handleStatus = async (applicationId, status) => {
@@ -854,6 +981,33 @@ function RecruiterDashboard() {
     </div>
   );
 
+  const handleRecruiterTabKeyDown = (event, tabIndex) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    let nextIndex = tabIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = (tabIndex + 1) % recruiterTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex =
+        (tabIndex - 1 + recruiterTabs.length) % recruiterTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = recruiterTabs.length - 1;
+    }
+
+    const nextTab = recruiterTabs[nextIndex];
+    setActiveTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`recruiter-tab-${nextTab.id}`)?.focus();
+    });
+  };
+
   return (
     <main className="dashboard-shell">
       <section className="dashboard-hero recruiter-hero">
@@ -894,7 +1048,118 @@ function RecruiterDashboard() {
         </div>
       )}
 
-      <section className="panel recruiter-company-panel">
+      <nav className="recruiter-tab-shell" aria-label="Recruiter workspace">
+        <div className="recruiter-tab-list" role="tablist">
+          {recruiterTabs.map((tab, tabIndex) => (
+            <button
+              type="button"
+              role="tab"
+              id={`recruiter-tab-${tab.id}`}
+              className={`recruiter-tab-button ${
+                activeTab === tab.id ? "active" : ""
+              }`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`recruiter-tabpanel-${tab.id}`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) =>
+                handleRecruiterTabKeyDown(event, tabIndex)
+              }
+              key={tab.id}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {activeTab === "overview" && (
+        <section
+          className="panel recruiter-overview-panel"
+          id="recruiter-tabpanel-overview"
+          role="tabpanel"
+          aria-labelledby="recruiter-tab-overview"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Workspace Summary</p>
+              <h2>Recruiting Overview</h2>
+              <p className="muted">
+                Employer trust, jobs, applicants, and interviews at a glance.
+              </p>
+            </div>
+          </div>
+
+          <div className="recruiter-summary-grid">
+            <article
+              className={`verification-${
+                companyProfile?.verification_status || "pending"
+              }`}
+            >
+              <span>Company verification</span>
+              <strong>
+                {companyProfile?.verification_status
+                  ? companyProfile.verification_status.replace(/_/g, " ")
+                  : "Not submitted"}
+              </strong>
+              <small>{companyProfile?.company_name || "Add company profile"}</small>
+            </article>
+            <article>
+              <span>Total posted jobs</span>
+              <strong>{jobs.length}</strong>
+              <small>Recruiter job posts</small>
+            </article>
+            <article>
+              <span>Total applicants</span>
+              <strong>{applicants.length}</strong>
+              <small>{currentJobTitle || "Select a job to load applicants"}</small>
+            </article>
+            <article>
+              <span>Shortlisted applicants</span>
+              <strong>{shortlistedApplicantCount}</strong>
+              <small>Current applicant view</small>
+            </article>
+            <article>
+              <span>Scheduled interviews</span>
+              <strong>{scheduledInterviewCount}</strong>
+              <small>Current applicant view</small>
+            </article>
+          </div>
+
+          <div className="recruiter-overview-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveTab("company-profile")}
+            >
+              Manage Company Profile
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setActiveTab("post-job")}
+              disabled={recruiterApproval.status !== "approved"}
+            >
+              Post a Job
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveTab("my-jobs")}
+            >
+              Review Job Posts
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "company-profile" && (
+      <section
+        className="panel recruiter-company-panel"
+        id="recruiter-tabpanel-company-profile"
+        role="tabpanel"
+        aria-labelledby="recruiter-tab-company-profile"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Employer Identity</p>
@@ -1046,8 +1311,163 @@ function RecruiterDashboard() {
           </form>
         )}
       </section>
+      )}
 
-      <section className="panel">
+      {activeTab === "post-job" && (
+        <section
+          className="panel recruiter-post-job-panel"
+          id="recruiter-tabpanel-post-job"
+          role="tabpanel"
+          aria-labelledby="recruiter-tab-post-job"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Hiring Pipeline</p>
+              <h2>Post a Job</h2>
+              <p className="muted">
+                Publish an internal HirePilot opportunity for candidate matching.
+              </p>
+            </div>
+            <span className={statusClass(recruiterApproval.status || "pending")}>
+              Recruiter {recruiterApproval.status || "pending"}
+            </span>
+          </div>
+
+          {recruiterApproval.status !== "approved" && (
+            <div
+              className={`recruiter-approval-notice ${
+                recruiterApproval.status === "blocked" ? "blocked" : "pending"
+              }`}
+              role={
+                recruiterApproval.status === "blocked" ? "alert" : "status"
+              }
+            >
+              <strong>
+                {recruiterApproval.status === "blocked"
+                  ? "Job posting unavailable"
+                  : "Admin approval required"}
+              </strong>
+              <span>
+                {recruiterApproval.status === "blocked"
+                  ? "This recruiter account is blocked. Contact the platform admin for assistance."
+                  : "Your recruiter account must be approved before a job can be published."}
+              </span>
+            </div>
+          )}
+
+          {companyProfile?.verification_status !== "verified" && (
+            <div className="company-verification-notice pending" role="status">
+              <strong>Company verification recommended</strong>
+              <span>
+                Posting remains available to approved recruiters, but verified
+                employers receive a trust badge on candidate job cards.
+              </span>
+            </div>
+          )}
+
+          <form className="recruiter-job-form" onSubmit={handlePostJob}>
+            <div className="recruiter-job-form-grid">
+              <label>
+                Job title
+                <input
+                  type="text"
+                  name="job_title"
+                  value={jobForm.job_title}
+                  onChange={handleJobInputChange}
+                  placeholder="Frontend Engineer"
+                  required
+                />
+              </label>
+              <label>
+                Company name
+                <input
+                  type="text"
+                  name="company_name"
+                  value={jobForm.company_name}
+                  onChange={handleJobInputChange}
+                  placeholder="Company name"
+                  required
+                />
+              </label>
+              <label>
+                Required skills
+                <input
+                  type="text"
+                  name="required_skills"
+                  value={jobForm.required_skills}
+                  onChange={handleJobInputChange}
+                  placeholder="React, JavaScript, CSS"
+                  required
+                />
+              </label>
+              <label>
+                Experience required
+                <input
+                  type="number"
+                  name="experience_required"
+                  value={jobForm.experience_required}
+                  onChange={handleJobInputChange}
+                  min="0"
+                  step="1"
+                  placeholder="2"
+                  required
+                />
+              </label>
+              <label>
+                Salary
+                <input
+                  type="text"
+                  name="salary"
+                  value={jobForm.salary}
+                  onChange={handleJobInputChange}
+                  placeholder="₹8–12 LPA"
+                  required
+                />
+              </label>
+              <label>
+                Location
+                <input
+                  type="text"
+                  name="location"
+                  value={jobForm.location}
+                  onChange={handleJobInputChange}
+                  placeholder="Bengaluru / Remote"
+                  required
+                />
+              </label>
+              <label className="recruiter-job-form-wide">
+                Job description
+                <textarea
+                  name="job_description"
+                  value={jobForm.job_description}
+                  onChange={handleJobInputChange}
+                  placeholder="Describe the role, responsibilities, and candidate expectations."
+                  rows="6"
+                  required
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              className="primary-button"
+              disabled={
+                postingJob || recruiterApproval.status !== "approved"
+              }
+            >
+              {postingJob ? "Posting Job..." : "Publish Job"}
+            </button>
+          </form>
+        </section>
+      )}
+
+      {activeTab === "my-jobs" && (
+      <section
+        className="panel"
+        id="recruiter-tabpanel-my-jobs"
+        role="tabpanel"
+        aria-labelledby="recruiter-tab-my-jobs"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Jobs</p>
@@ -1094,7 +1514,9 @@ function RecruiterDashboard() {
 
                   <button
                     className="secondary-button"
-                    onClick={() => fetchApplicants(job.job_id, job.job_title)}
+                    onClick={() =>
+                      handleViewApplicants(job.job_id, job.job_title)
+                    }
                   >
                     View Applicants
                   </button>
@@ -1104,8 +1526,15 @@ function RecruiterDashboard() {
           </div>
         )}
       </section>
+      )}
 
-      <section className="panel">
+      {activeTab === "applicants" && (
+      <section
+        className="panel"
+        id="recruiter-tabpanel-applicants"
+        role="tabpanel"
+        aria-labelledby="recruiter-tab-applicants"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Applicants</p>
@@ -1234,6 +1663,86 @@ function RecruiterDashboard() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === "interviews" && (
+        <section
+          className="panel recruiter-interviews-panel"
+          id="recruiter-tabpanel-interviews"
+          role="tabpanel"
+          aria-labelledby="recruiter-tab-interviews"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Interview Pipeline</p>
+              <h2>{currentJobTitle || "Interviews"}</h2>
+              <p className="muted">
+                Schedule shortlisted candidates and manage existing interviews.
+              </p>
+            </div>
+            <span className="count-pill">{interviewCandidates.length}</span>
+          </div>
+
+          {!currentJobId ? (
+            <div className="recruiter-tab-empty-action">
+              <p className="empty-state">
+                Select a job and load its applicants before managing interviews.
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setActiveTab("my-jobs")}
+              >
+                Go to My Jobs
+              </button>
+            </div>
+          ) : loadingApplicants ? (
+            <p className="empty-state">Loading interview candidates...</p>
+          ) : interviewCandidates.length === 0 ? (
+            <div className="recruiter-tab-empty-action">
+              <p className="empty-state">
+                No shortlisted or scheduled candidates are available for this job.
+              </p>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setActiveTab("applicants")}
+              >
+                Review Applicants
+              </button>
+            </div>
+          ) : (
+            <div className="recruiter-interview-list">
+              {interviewCandidates.map((candidate, index) => (
+                <article
+                  className="recruiter-interview-card"
+                  key={candidate.application_id || candidate.candidate_id || index}
+                >
+                  <div className="recruiter-interview-card-header">
+                    <div>
+                      <h3>{candidate.full_name || "Candidate"}</h3>
+                      <p>{candidate.preferred_role || "Role not provided"}</p>
+                    </div>
+                    <span className={statusClass(candidate.application_status)}>
+                      {candidate.application_status}
+                    </span>
+                  </div>
+
+                  {renderInterviewManager(candidate)}
+
+                  <button
+                    type="button"
+                    className="secondary-button small-button"
+                    onClick={() => setSelectedCandidate(candidate)}
+                  >
+                    View Candidate Profile
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {selectedCandidateFromList && (
         <div className="preview-overlay" onClick={() => setSelectedCandidate(null)}>
