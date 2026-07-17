@@ -31,14 +31,17 @@ error:"Recruiter account not found"
 const result=await pool.query(
 
 `SELECT
-job_id,
-job_title,
-company_name,
-required_skills,
-salary
+j.job_id,
+j.job_title,
+j.company_name,
+j.required_skills,
+j.salary,
+rc.verification_status AS company_verification_status
 
-FROM jobs
-WHERE recruiter_id=$1`,
+FROM jobs j
+LEFT JOIN recruiter_companies rc
+ON rc.recruiter_id = j.recruiter_id
+WHERE j.recruiter_id=$1`,
 
 [recruiter_id]
 

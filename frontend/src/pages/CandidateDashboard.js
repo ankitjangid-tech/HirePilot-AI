@@ -305,6 +305,33 @@ const isSafeDummyJob = (job) =>
 const isSimulatedPlatform = (job) =>
   /linkedin simulation|indeed simulation/i.test(job?.source_platform || "");
 
+const employerTrustBadge = (verificationStatus) => {
+  if (verificationStatus === "verified") {
+    return { label: "Verified Employer", className: "verified" };
+  }
+
+  if (["pending", "needs_review"].includes(verificationStatus)) {
+    return { label: "Verification Pending", className: "pending" };
+  }
+
+  return { label: "Unverified Employer", className: "unverified" };
+};
+
+const getInternalJobTrustData = async (token) => {
+  const response = await fetch("http://localhost:5000/api/jobs/all", {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("Unable to load employer verification data");
+  }
+
+  const data = await response.json();
+  return data.jobs || [];
+};
+
 function CandidateDashboard() {
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
@@ -362,7 +389,28 @@ function CandidateDashboard() {
       setProfileForm(buildProfileForm(profileData.profile));
 
       const jobsResponse = await getMatchedJobs(token);
-      setJobs(jobsResponse.data.matchedJobs || []);
+      const matchedJobs = jobsResponse.data.matchedJobs || [];
+
+      try {
+        const internalJobs = await getInternalJobTrustData(token);
+        const trustByJobId = new Map(
+          internalJobs.map((job) => [
+            String(job.job_id),
+            job.company_verification_status || null,
+          ])
+        );
+
+        setJobs(
+          matchedJobs.map((job) => ({
+            ...job,
+            company_verification_status:
+              trustByJobId.get(String(job.job_id)) || null,
+          }))
+        );
+      } catch (trustError) {
+        console.log("EMPLOYER TRUST FETCH ERROR:", trustError.message);
+        setJobs(matchedJobs);
+      }
 
       const externalJobsResponse = await getMatchedExternalJobs(token);
       setExternalJobs(externalJobsResponse.data.matchedExternalJobs || []);
@@ -1356,15 +1404,26 @@ function CandidateDashboard() {
           <p className="empty-state">No matched jobs found yet.</p>
         ) : (
           <div className="card-grid">
-            {jobs.map((job) => (
-              <article className="item-card" key={job.job_id}>
-                <div>
-                  <h3>{job.job_title}</h3>
-                  <p>{job.company_name}</p>
-                </div>
-                <span className="score-pill">{job.match_score}% match</span>
-              </article>
-            ))}
+            {jobs.map((job) => {
+              const trustBadge = employerTrustBadge(
+                job.company_verification_status
+              );
+
+              return (
+                <article className="item-card job-trust-card" key={job.job_id}>
+                  <div>
+                    <h3>{job.job_title}</h3>
+                    <p>{job.company_name}</p>
+                    <span
+                      className={`trust-badge trust-badge-${trustBadge.className}`}
+                    >
+                      {trustBadge.label}
+                    </span>
+                  </div>
+                  <span className="score-pill">{job.match_score}% match</span>
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
@@ -1390,7 +1449,22 @@ function CandidateDashboard() {
           {externalJobs.map((job) => (
             <article className="item-card external-job-card" key={job.external_job_id}>
               <div className="external-card-topline">
-                <span className="source-tag">{job.source_platform}</span>
+                <div className="external-source-badges">
+                  <span className="source-tag">{job.source_platform}</span>
+                  {job.review_status === "approved" && (
+                    <span className="trust-badge trust-badge-reviewed">
+                      Reviewed by HirePilot
+                    </span>
+                  )}
+                  {isSafeDummyJob(job) && (
+                    <span className="safe-demo-tag">Safe demo source</span>
+                  )}
+                  {isSimulatedPlatform(job) && (
+                    <span className="trust-badge trust-badge-simulated">
+                      Simulated source
+                    </span>
+                  )}
+                </div>
                 <span className="score-pill">{job.match_score}% match</span>
               </div>
 
@@ -1475,8 +1549,18 @@ function CandidateDashboard() {
                   <span className="source-tag">
                     {selectedExternalJob.source_platform || "External source"}
                   </span>
+                  {selectedExternalJob.review_status === "approved" && (
+                    <span className="trust-badge trust-badge-reviewed">
+                      Reviewed by HirePilot
+                    </span>
+                  )}
                   {isSafeDummyJob(selectedExternalJob) && (
                     <span className="safe-demo-tag">Safe demo source</span>
+                  )}
+                  {isSimulatedPlatform(selectedExternalJob) && (
+                    <span className="trust-badge trust-badge-simulated">
+                      Simulated source
+                    </span>
                   )}
                 </div>
                 <h2 id="external-preview-title">
