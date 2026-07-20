@@ -234,6 +234,13 @@ const candidateTabs = [
   { id: "agent-timeline", label: "AI Agent Timeline" },
 ];
 
+const applicationFilters = [
+  { id: "all", label: "All" },
+  { id: "internal", label: "Internal" },
+  { id: "external", label: "External" },
+  { id: "pending-manual", label: "Pending Manual" },
+];
+
 const matchesAgentRunFilter = (run, filter) => {
   if (filter === "active") {
     return ["queued", "running", "needs_manual_action"].includes(
@@ -303,6 +310,29 @@ const externalApplyModeLabel = (applyMode) => {
   }
 
   return applyMode || "Not specified";
+};
+
+const externalApplicationStatusLabel = (application) => {
+  const status = String(application?.application_status || "Pending");
+
+  if (status === "Pending") {
+    return "Pending Manual Action";
+  }
+
+  if (status === "Applied" && application?.apply_mode === "manual_questions") {
+    return "Manually Completed";
+  }
+
+  return status;
+};
+
+const formatApplicationDate = (value) => {
+  if (!value) {
+    return "Date not available";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Date not available" : date.toLocaleString();
 };
 
 const isCrawl4AiDemoJob = (job) =>
@@ -380,6 +410,7 @@ function CandidateDashboard() {
   const [selectedExternalJob, setSelectedExternalJob] = useState(null);
   const [lastAgentRefreshAt, setLastAgentRefreshAt] = useState(null);
   const [agentRunFilter, setAgentRunFilter] = useState("all");
+  const [applicationFilter, setApplicationFilter] = useState("all");
   const [expandedRunErrors, setExpandedRunErrors] = useState({});
   const [notificationActionLoading, setNotificationActionLoading] = useState(false);
 
@@ -1029,8 +1060,51 @@ function CandidateDashboard() {
   const pendingManualExternalCount = externalApplications.filter(
     (application) => application.application_status === "Pending"
   ).length;
+  const pendingManualActionCount =
+    pendingApplications.length + pendingManualExternalCount;
   const internalApplicationCount =
     applications.length + pendingApplications.length;
+  const pendingManualActions = [
+    ...pendingApplications.map((application) => ({
+      ...application,
+      application_source_type: "internal",
+    })),
+    ...externalApplications
+      .filter((application) => application.application_status === "Pending")
+      .map((application) => ({
+        ...application,
+        application_source_type: "external",
+      })),
+  ];
+  const visiblePendingManualActions = pendingManualActions.filter(
+    (application) =>
+      applicationFilter === "all" ||
+      applicationFilter === "pending-manual" ||
+      application.application_source_type === applicationFilter
+  );
+  const visibleExternalApplications =
+    applicationFilter === "all"
+      ? externalApplications.filter(
+          (application) => application.application_status !== "Pending"
+        )
+      : externalApplications;
+  const showInternalApplications = ["all", "internal"].includes(
+    applicationFilter
+  );
+  const showExternalApplications = ["all", "external"].includes(
+    applicationFilter
+  );
+  const showPendingManualActions = [
+    "all",
+    "internal",
+    "pending-manual",
+  ].includes(applicationFilter);
+  const applicationFilterCounts = {
+    all: internalApplicationCount + externalApplications.length,
+    internal: internalApplicationCount,
+    external: externalApplications.length,
+    "pending-manual": pendingManualActionCount,
+  };
 
   const processingRunsCount = externalAgentRuns.filter(isProcessingAgentRun).length;
   const waitingRunsCount = externalAgentRuns.filter(isWaitingAgentRun).length;
@@ -1165,10 +1239,10 @@ function CandidateDashboard() {
               <strong>{internalApplicationCount}</strong>
               <small>Submitted and pending internal applications</small>
             </article>
-            <article className={pendingManualExternalCount > 0 ? "pending" : ""}>
-              <span>Manual external actions</span>
-              <strong>{pendingManualExternalCount}</strong>
-              <small>External applications awaiting completion</small>
+            <article className={pendingManualActionCount > 0 ? "pending" : ""}>
+              <span>Pending/manual actions</span>
+              <strong>{pendingManualActionCount}</strong>
+              <small>Internal and external applications awaiting completion</small>
             </article>
             <article>
               <span>Upcoming interviews</span>
@@ -1862,100 +1936,218 @@ function CandidateDashboard() {
       {activeTab === "applications" && (
       <>
       <section
-        className="dashboard-grid two-column"
+        className="panel application-control-center"
         id="candidate-tabpanel-applications"
         role="tabpanel"
         aria-labelledby="candidate-tab-applications"
       >
-        <div className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Application Workspace</p>
+            <h2>Application Control Center</h2>
+            <p className="muted">
+              Track internal applications, external outcomes, and manual actions
+              from one place.
+            </p>
+          </div>
+        </div>
+
+        <div className="application-summary-grid">
+          <article>
+            <span>Internal applications</span>
+            <strong>{internalApplicationCount}</strong>
+          </article>
+          <article>
+            <span>External applications</span>
+            <strong>{externalApplications.length}</strong>
+          </article>
+          <article className={pendingManualActionCount > 0 ? "pending" : ""}>
+            <span>Pending manual actions</span>
+            <strong>{pendingManualActionCount}</strong>
+          </article>
+          <article>
+            <span>Scheduled interviews</span>
+            <strong>{upcomingInterviews.length}</strong>
+          </article>
+        </div>
+
+        <div className="application-filter-bar" aria-label="Filter applications">
+          {applicationFilters.map((filter) => (
+            <button
+              type="button"
+              className={`application-filter-chip ${
+                applicationFilter === filter.id ? "active" : ""
+              }`}
+              key={filter.id}
+              onClick={() => setApplicationFilter(filter.id)}
+              aria-pressed={applicationFilter === filter.id}
+            >
+              {filter.label}
+              <span>{applicationFilterCounts[filter.id]}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {(showInternalApplications || showPendingManualActions) && (
+      <section className="dashboard-grid two-column application-section-grid">
+        {showInternalApplications && (
+        <div className="panel application-control-section">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Applications</p>
-              <h2>My Applications</h2>
+              <p className="eyebrow">HirePilot Applications</p>
+              <h2>Internal Applications</h2>
             </div>
             <span className="count-pill">{applications.length}</span>
           </div>
 
           {applications.length === 0 ? (
-            <p className="empty-state">No submitted applications yet.</p>
+            <p className="empty-state">No submitted internal applications yet.</p>
           ) : (
-            <div className="stack-list">
+            <div className="application-control-list">
               {applications.map((application) => (
-                <article className="list-card" key={application.application_id}>
-                  <div>
-                    <h3>{application.job_title}</h3>
-                    <p>{application.company_name}</p>
+                <article
+                  className="application-control-card"
+                  key={application.application_id}
+                >
+                  <div className="application-control-card-main">
+                    <div>
+                      <h3>{application.job_title || `Job ${application.job_id}`}</h3>
+                      <p>{application.company_name || "HirePilot recruiter"}</p>
+                    </div>
+                    <span className={statusClass(application.application_status)}>
+                      {application.application_status}
+                    </span>
                   </div>
-                  <span className={statusClass(application.application_status)}>
-                    {application.application_status}
+                  <span className="application-date">
+                    Applied: {formatApplicationDate(application.applied_at)}
                   </span>
                 </article>
               ))}
             </div>
           )}
         </div>
+        )}
 
-        <div className="panel">
+        {showPendingManualActions && (
+        <div className="panel application-control-section pending-manual-section">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Fallback</p>
-              <h2>Pending Applications</h2>
+              <p className="eyebrow">Action Required</p>
+              <h2>Pending Manual Actions</h2>
             </div>
-            <span className="count-pill">{pendingApplications.length}</span>
+            <span className="count-pill">{visiblePendingManualActions.length}</span>
           </div>
 
-          {pendingApplications.length === 0 ? (
-            <p className="empty-state">No pending applications.</p>
+          {visiblePendingManualActions.length === 0 ? (
+            <p className="empty-state">
+              No pending manual actions for this view. You are all caught up.
+            </p>
           ) : (
-            <div className="stack-list">
-              {pendingApplications.map((application) => (
-                <article className="list-card" key={application.application_id}>
-                  <div>
-                    <h3>{application.job_title || `Job ${application.job_id}`}</h3>
-                    <p>{application.company_name || "Manual completion needed"}</p>
-                    <span className={statusClass(application.application_status)}>
-                      {application.application_status}
+            <div className="application-control-list">
+              {visiblePendingManualActions.map((application) => {
+                const isExternal =
+                  application.application_source_type === "external";
+                const applicationId = isExternal
+                  ? application.external_application_id
+                  : application.application_id;
+                const isCompleting = isExternal
+                  ? completingExternalApplicationId === applicationId
+                  : completingApplicationId === applicationId;
+
+                return (
+                <article
+                  className="application-control-card pending-manual-card"
+                  key={`${application.application_source_type}-${applicationId}`}
+                >
+                  <div className="application-control-card-main">
+                    <div>
+                      <span className="application-source-label">
+                        {isExternal ? "External" : "Internal"}
+                      </span>
+                      <h3>
+                        {application.job_title ||
+                          `Job ${application.job_id || application.external_job_id}`}
+                      </h3>
+                      <p>
+                        {application.company_name || "Company not listed"}
+                        {isExternal && application.source_platform
+                          ? ` · ${application.source_platform}`
+                          : ""}
+                      </p>
+                    </div>
+                    <span className={statusClass("Pending Manual Action")}>
+                      Pending Manual Action
                     </span>
                   </div>
 
-                  <button
-                    className="secondary-button"
-                    onClick={() =>
-                      handleCompleteApplication(application.application_id)
-                    }
-                    disabled={completingApplicationId === application.application_id}
-                  >
-                    {completingApplicationId === application.application_id
-                      ? "Completing..."
-                      : "Complete Application"}
-                  </button>
+                  <p className="application-reason manual-action-note">
+                    {application.failure_reason ||
+                      application.manual_action_note ||
+                      application.reason ||
+                      (isExternal
+                        ? "Open the source, complete the required external steps, then confirm completion here."
+                        : "This application needs your confirmation before it can be completed.")}
+                  </p>
+
+                  <div className="application-manual-actions">
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() =>
+                        isExternal
+                          ? handleCompleteExternalApplication(applicationId)
+                          : handleCompleteApplication(applicationId)
+                      }
+                      disabled={isCompleting}
+                    >
+                      {isCompleting ? "Completing..." : "Complete Manually"}
+                    </button>
+                    {isExternal && application.job_url && (
+                      <a
+                        className="secondary-button link-button"
+                        href={application.job_url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open Source
+                      </a>
+                    )}
+                  </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
+        )}
       </section>
+      )}
 
-      <section className="panel">
+      {showExternalApplications && (
+      <section className="panel application-control-section external-application-tracker">
         <div className="section-heading">
           <div>
             <p className="eyebrow">External Applications</p>
             <h2>External Apply Tracker</h2>
             <p className="muted">
-              For manual-pending jobs, open the source page first. After you
-              finish the external form, mark it completed here.
+              Review completed, failed, cancelled, and manual external outcomes.
             </p>
           </div>
-          <span className="count-pill">{externalApplications.length}</span>
+          <span className="count-pill">{visibleExternalApplications.length}</span>
         </div>
 
-        {externalApplications.length === 0 ? (
-          <p className="empty-state">No external applications yet.</p>
+        {visibleExternalApplications.length === 0 ? (
+          <p className="empty-state">
+            {applicationFilter === "all" && pendingManualExternalCount > 0
+              ? "Pending external applications are listed under Pending Manual Actions."
+              : "No external applications match this filter."}
+          </p>
         ) : (
-          <div className="stack-list">
-            {externalApplications.map((application) => (
+          <div className="application-control-list">
+            {visibleExternalApplications.map((application) => (
               <article
-                className="list-card external-application-card"
+                className="application-control-card external-application-card"
                 key={application.external_application_id}
               >
                 <div>
@@ -1977,8 +2169,12 @@ function CandidateDashboard() {
                 </div>
 
                 <div className="external-actions-row">
-                  <span className={statusClass(application.application_status)}>
-                    {application.application_status}
+                  <span
+                    className={statusClass(
+                      externalApplicationStatusLabel(application)
+                    )}
+                  >
+                    {externalApplicationStatusLabel(application)}
                   </span>
 
                   {application.application_status === "Pending" && (
@@ -1997,7 +2193,7 @@ function CandidateDashboard() {
                       {completingExternalApplicationId ===
                       application.external_application_id
                         ? "Marking completed..."
-                        : "I completed this manually"}
+                        : "Complete Manually"}
                     </button>
                   )}
 
@@ -2015,6 +2211,7 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      )}
       </>
       )}
 
