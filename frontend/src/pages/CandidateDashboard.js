@@ -223,6 +223,17 @@ const agentRunFilters = [
   { id: "failed", label: "Failed" },
 ];
 
+const candidateTabs = [
+  { id: "overview", label: "Overview" },
+  { id: "profile", label: "Profile" },
+  { id: "matched-jobs", label: "Matched Jobs" },
+  { id: "external-jobs", label: "External Jobs" },
+  { id: "applications", label: "Applications" },
+  { id: "interviews", label: "Interviews" },
+  { id: "notifications", label: "Notifications" },
+  { id: "agent-timeline", label: "AI Agent Timeline" },
+];
+
 const matchesAgentRunFilter = (run, filter) => {
   if (filter === "active") {
     return ["queued", "running", "needs_manual_action"].includes(
@@ -333,6 +344,7 @@ const getInternalJobTrustData = async (token) => {
 };
 
 function CandidateDashboard() {
+  const [activeTab, setActiveTab] = useState("overview");
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
   const [missingFields, setMissingFields] = useState([]);
@@ -1014,6 +1026,11 @@ function CandidateDashboard() {
       notification.interview_date &&
       notification.notification_type !== "interview_cancelled"
   );
+  const pendingManualExternalCount = externalApplications.filter(
+    (application) => application.application_status === "Pending"
+  ).length;
+  const internalApplicationCount =
+    applications.length + pendingApplications.length;
 
   const processingRunsCount = externalAgentRuns.filter(isProcessingAgentRun).length;
   const waitingRunsCount = externalAgentRuns.filter(isWaitingAgentRun).length;
@@ -1038,6 +1055,33 @@ function CandidateDashboard() {
     }));
   };
 
+  const handleCandidateTabKeyDown = (event, tabIndex) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) {
+      return;
+    }
+
+    event.preventDefault();
+
+    let nextIndex = tabIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = (tabIndex + 1) % candidateTabs.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex =
+        (tabIndex - 1 + candidateTabs.length) % candidateTabs.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = candidateTabs.length - 1;
+    }
+
+    const nextTab = candidateTabs[nextIndex];
+    setActiveTab(nextTab.id);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`candidate-tab-${nextTab.id}`)?.focus();
+    });
+  };
+
   return (
     <main className="dashboard-shell">
       <section className="dashboard-hero">
@@ -1056,8 +1100,121 @@ function CandidateDashboard() {
 
       {message && <div className="notice-banner">{message}</div>}
 
-      {profile && (
-      <section className="dashboard-grid two-column">
+      <nav className="candidate-tab-shell" aria-label="Candidate workspace">
+        <div className="candidate-tab-list" role="tablist">
+          {candidateTabs.map((tab, tabIndex) => (
+            <button
+              type="button"
+              role="tab"
+              id={`candidate-tab-${tab.id}`}
+              className={`candidate-tab-button ${
+                activeTab === tab.id ? "active" : ""
+              }`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`candidate-tabpanel-${tab.id}`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) =>
+                handleCandidateTabKeyDown(event, tabIndex)
+              }
+              key={tab.id}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      {activeTab === "overview" && (
+        <section
+          className="panel candidate-overview-panel"
+          id="candidate-tabpanel-overview"
+          role="tabpanel"
+          aria-labelledby="candidate-tab-overview"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Workspace Summary</p>
+              <h2>Candidate Overview</h2>
+              <p className="muted">
+                Your profile, opportunities, applications, and updates at a glance.
+              </p>
+            </div>
+          </div>
+
+          <div className="candidate-summary-grid">
+            <article className={profileCompleted ? "complete" : "pending"}>
+              <span>Profile</span>
+              <strong>{profileCompleted ? "Complete" : "Incomplete"}</strong>
+              <small>
+                ATS score: {profile?.ats_score ?? "Not generated"}
+              </small>
+            </article>
+            <article>
+              <span>Matched jobs</span>
+              <strong>{jobs.length}</strong>
+              <small>Internal HirePilot opportunities</small>
+            </article>
+            <article>
+              <span>External approved jobs</span>
+              <strong>{externalJobs.length}</strong>
+              <small>Reviewed candidate-visible sources</small>
+            </article>
+            <article>
+              <span>Applications</span>
+              <strong>{internalApplicationCount}</strong>
+              <small>Submitted and pending internal applications</small>
+            </article>
+            <article className={pendingManualExternalCount > 0 ? "pending" : ""}>
+              <span>Manual external actions</span>
+              <strong>{pendingManualExternalCount}</strong>
+              <small>External applications awaiting completion</small>
+            </article>
+            <article>
+              <span>Upcoming interviews</span>
+              <strong>{upcomingInterviews.length}</strong>
+              <small>Active scheduled interviews</small>
+            </article>
+            <article className={unreadCount > 0 ? "unread" : ""}>
+              <span>Unread notifications</span>
+              <strong>{unreadCount}</strong>
+              <small>Candidate updates requiring attention</small>
+            </article>
+          </div>
+
+          <div className="candidate-overview-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveTab("profile")}
+            >
+              Manage Profile
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setActiveTab("matched-jobs")}
+            >
+              View Matched Jobs
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setActiveTab("applications")}
+            >
+              Track Applications
+            </button>
+          </div>
+        </section>
+      )}
+
+      {activeTab === "profile" && profile && (
+      <section
+        className="dashboard-grid two-column candidate-profile-workspace"
+        id="candidate-tabpanel-profile"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-profile"
+      >
           <div className="panel">
             <div className="section-heading">
               <div>
@@ -1391,7 +1548,13 @@ function CandidateDashboard() {
         </section>
       )}
 
-      <section className="panel">
+      {activeTab === "matched-jobs" && (
+      <section
+        className="panel"
+        id="candidate-tabpanel-matched-jobs"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-matched-jobs"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Matching</p>
@@ -1427,8 +1590,15 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      )}
 
-      <section className="panel external-discovery-panel">
+      {activeTab === "external-jobs" && (
+      <section
+        className="panel external-discovery-panel"
+        id="candidate-tabpanel-external-jobs"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-external-jobs"
+      >
       <div className="section-heading">
         <div>
           <p className="eyebrow">External Discovery</p>
@@ -1526,6 +1696,7 @@ function CandidateDashboard() {
         </div>
       )}
       </section>
+      )}
 
       {selectedExternalJob && (
         <div
@@ -1688,7 +1859,14 @@ function CandidateDashboard() {
       )}
 
 
-      <section className="dashboard-grid two-column">
+      {activeTab === "applications" && (
+      <>
+      <section
+        className="dashboard-grid two-column"
+        id="candidate-tabpanel-applications"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-applications"
+      >
         <div className="panel">
           <div className="section-heading">
             <div>
@@ -1837,9 +2015,18 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      </>
+      )}
 
 
-      <section className="panel orchestration-panel">
+      {activeTab === "agent-timeline" && (
+      <>
+      <section
+        className="panel orchestration-panel"
+        id="candidate-tabpanel-agent-timeline"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-agent-timeline"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">AI Agent Orchestration</p>
@@ -2137,8 +2324,16 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      </>
+      )}
 
-      <section className="panel">
+      {activeTab === "interviews" && (
+      <section
+        className="panel"
+        id="candidate-tabpanel-interviews"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-interviews"
+      >
         <div className="section-heading">
           <div>
             <p className="eyebrow">Interviews</p>
@@ -2179,8 +2374,15 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      )}
 
-      <section className="panel">
+      {activeTab === "notifications" && (
+      <section
+        className="panel"
+        id="candidate-tabpanel-notifications"
+        role="tabpanel"
+        aria-labelledby="candidate-tab-notifications"
+      >
         <div className="section-heading notification-heading">
           <div>
             <p className="eyebrow">Updates</p>
@@ -2277,6 +2479,7 @@ function CandidateDashboard() {
           </div>
         )}
       </section>
+      )}
     </main>
   );
 }
