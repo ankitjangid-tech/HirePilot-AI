@@ -2,6 +2,8 @@
 
 This script presents the platform as a complete local recruitment workflow while keeping external discovery and automation inside their safe demo boundaries.
 
+For a condensed presentation-day pass, use the [E2E Demo Checklist](E2E_DEMO_CHECKLIST.md). Run the local [Demo Health Check](../scripts/demo-health-check.md) before beginning this full script.
+
 ## Demo promise
 
 Use these statements consistently:
@@ -66,6 +68,14 @@ Verify:
 - `http://127.0.0.1:8000/health`
 - `http://localhost:5000/`
 - `http://localhost:3000`
+
+Then run the read-only stack check from the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\demo-health-check.ps1
+```
+
+Resolve all **FAIL** results and review any **WARN** result before logging in. The script performs localhost GET requests only; it does not run discovery, launch Playwright, or change application data.
 
 Expected story: the React application uses the Express API, PostgreSQL stores business/audit data, and FastAPI handles controlled worker operations.
 

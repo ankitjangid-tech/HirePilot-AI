@@ -267,6 +267,18 @@ npm start
 
 Open `http://localhost:3000` and sign in with a synthetic local account.
 
+### Verify the full local stack
+
+From the repository root, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\demo-health-check.ps1
+```
+
+The script checks the backend, worker health, optional queue statistics, and frontend. It prints exact start commands for missing services, performs no writes, and calls localhost only. See [demo-health-check.md](../scripts/demo-health-check.md) for result meanings and safety details.
+
+After the stack passes, continue with the [E2E Demo Checklist](E2E_DEMO_CHECKLIST.md).
+
 ## 8. Build validation
 
 ```powershell
