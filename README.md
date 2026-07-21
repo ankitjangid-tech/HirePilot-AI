@@ -151,6 +151,19 @@ Then open `http://localhost:3000`. Service checks:
 
 For database provisioning, environment placeholders, admin setup, Linux/macOS commands, and troubleshooting, see the [Setup Guide](docs/SETUP_GUIDE.md).
 
+## Demo health check
+
+After starting all three services, run the read-only local readiness check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\demo-health-check.ps1
+```
+
+It reports clear **PASS**, **WARN**, and **FAIL** results for the backend, AI worker, optional queue statistics, and frontend. It does not modify files or the database and does not contact an external website.
+
+- [Health check usage and safety](scripts/demo-health-check.md)
+- [Fast E2E Demo Checklist](docs/E2E_DEMO_CHECKLIST.md)
+
 ## Demo accounts
 
 The following are examples only; they are not guaranteed to be seeded:
@@ -199,6 +212,7 @@ Not yet complete:
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Demo Guide](docs/DEMO_GUIDE.md)
+- [E2E Demo Checklist](docs/E2E_DEMO_CHECKLIST.md)
 - [Setup Guide](docs/SETUP_GUIDE.md)
 - [Features](docs/FEATURES.md)
 - [Roadmap](docs/ROADMAP.md)
