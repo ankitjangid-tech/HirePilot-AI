@@ -147,6 +147,7 @@ const downloadPdfBlob = (blob, filename) => {
 
 function RecruiterDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [jobs, setJobs] = useState([]);
   const [applicants, setApplicants] = useState([]);
   const [currentJobId, setCurrentJobId] = useState(null);
@@ -173,8 +174,12 @@ function RecruiterDashboard() {
   const [postingJob, setPostingJob] = useState(false);
 
   useEffect(() => {
-    fetchJobs();
-    fetchCompany();
+    const loadRecruiterWorkspace = async () => {
+      await Promise.all([fetchJobs(), fetchCompany()]);
+      setDashboardLoading(false);
+    };
+
+    loadRecruiterWorkspace();
   }, []);
 
   const selectedCandidateFromList = useMemo(() => {
@@ -1008,11 +1013,32 @@ function RecruiterDashboard() {
     });
   };
 
+  if (dashboardLoading) {
+    return (
+      <main className="dashboard-shell">
+        <section className="dashboard-hero recruiter-hero">
+          <div>
+            <p className="eyebrow">Recruiter Workspace</p>
+            <h1>Preparing your dashboard</h1>
+            <p className="muted">Loading company trust, jobs, and hiring activity.</p>
+          </div>
+        </section>
+        <section className="panel workspace-loading-card" role="status" aria-live="polite">
+          <span className="workspace-loading-spinner" aria-hidden="true" />
+          <div>
+            <strong>Loading Recruiter Workspace</strong>
+            <p>Your current hiring pipeline will be ready in a moment.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="dashboard-shell">
       <section className="dashboard-hero recruiter-hero">
         <div>
-          <p className="eyebrow">Recruiter Portal</p>
+          <p className="eyebrow">Recruiter Workspace</p>
           <h1>Recruiter Dashboard</h1>
           <p className="muted">
             Review applicants, inspect candidate profiles, update status, and schedule interviews.
@@ -1024,7 +1050,7 @@ function RecruiterDashboard() {
         </div>
       </section>
 
-      {actionMessage && <div className="notice-banner">{actionMessage}</div>}
+      {actionMessage && <div className="notice-banner" role="status">{actionMessage}</div>}
 
       {recruiterApproval.status === "pending" && (
         <div className="recruiter-approval-notice pending" role="status">
@@ -1179,7 +1205,15 @@ function RecruiterDashboard() {
           </span>
         </div>
 
-        {companyProfile?.verification_status === "verified" ? (
+        {!companyLoading && !companyProfile && (
+          <div className="empty-state-card compact-empty-state">
+            <span className="empty-state-kicker">Company profile not started</span>
+            <strong>Introduce your company to candidates.</strong>
+            <p>Complete the form below to submit your employer identity for admin verification.</p>
+          </div>
+        )}
+
+        {companyProfile && (companyProfile.verification_status === "verified" ? (
           <div className="company-verification-notice verified" role="status">
             <strong>Verified company</strong>
             <span>
@@ -1210,7 +1244,7 @@ function RecruiterDashboard() {
               verified employer yet.
             </span>
           </div>
-        )}
+        ))}
 
         {companyProfile?.verification_notes && (
           <div className="company-verification-notes">
@@ -1231,7 +1265,10 @@ function RecruiterDashboard() {
         )}
 
         {companyLoading ? (
-          <p className="empty-state">Loading company profile...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading company profile...</span>
+          </div>
         ) : (
           <form
             className="recruiter-company-form"
@@ -1477,9 +1514,24 @@ function RecruiterDashboard() {
         </div>
 
         {loadingJobs ? (
-          <p className="empty-state">Loading jobs...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading your job posts...</span>
+          </div>
         ) : jobs.length === 0 ? (
-          <p className="empty-state">No jobs posted yet.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No job posts yet</span>
+            <strong>Your published roles will be organized here.</strong>
+            <p>Create your first job after your recruiter account is approved.</p>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setActiveTab("post-job")}
+              disabled={recruiterApproval.status !== "approved"}
+            >
+              Post a Job
+            </button>
+          </div>
         ) : (
           <div className="card-grid">
             {jobs.map((job) => {
@@ -1544,11 +1596,25 @@ function RecruiterDashboard() {
         </div>
 
         {loadingApplicants ? (
-          <p className="empty-state">Loading applicants...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading ranked applicants...</span>
+          </div>
         ) : !currentJobId ? (
-          <p className="empty-state">Choose a job to review applicants.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">Choose a job first</span>
+            <strong>Select a posted role to review its applicants.</strong>
+            <p>Candidate rankings, previews, and hiring controls will appear here.</p>
+            <button type="button" className="secondary-button" onClick={() => setActiveTab("my-jobs")}>
+              Go to My Jobs
+            </button>
+          </div>
         ) : applicants.length === 0 ? (
-          <p className="empty-state">No applicants found for this job.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No applicants yet</span>
+            <strong>This job has not received any applications.</strong>
+            <p>New candidate applications and ranking signals will appear automatically.</p>
+          </div>
         ) : (
           <div className="applicant-list">
             {applicants.map((candidate, index) => {
@@ -1684,10 +1750,10 @@ function RecruiterDashboard() {
           </div>
 
           {!currentJobId ? (
-            <div className="recruiter-tab-empty-action">
-              <p className="empty-state">
-                Select a job and load its applicants before managing interviews.
-              </p>
+            <div className="empty-state-card recruiter-tab-empty-action">
+              <span className="empty-state-kicker">No job selected</span>
+              <strong>Select a job before managing interviews.</strong>
+              <p>Shortlisted candidates and scheduled interview controls will appear here.</p>
               <button
                 type="button"
                 className="secondary-button"
@@ -1697,12 +1763,15 @@ function RecruiterDashboard() {
               </button>
             </div>
           ) : loadingApplicants ? (
-            <p className="empty-state">Loading interview candidates...</p>
+            <div className="inline-loading-state" role="status">
+              <span className="workspace-loading-spinner" aria-hidden="true" />
+              <span>Loading interview candidates...</span>
+            </div>
           ) : interviewCandidates.length === 0 ? (
-            <div className="recruiter-tab-empty-action">
-              <p className="empty-state">
-                No shortlisted or scheduled candidates are available for this job.
-              </p>
+            <div className="empty-state-card recruiter-tab-empty-action">
+              <span className="empty-state-kicker">No interviews to manage</span>
+              <strong>No shortlisted or scheduled candidates are available.</strong>
+              <p>Shortlist an applicant before scheduling an interview.</p>
               <button
                 type="button"
                 className="secondary-button"
