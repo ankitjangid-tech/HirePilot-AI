@@ -11,6 +11,7 @@ import {
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
+  runAllowlistedSourceDiscovery,
   reviewExternalJob,
 } from "../services/adminService";
 
@@ -86,6 +87,7 @@ function AdminDashboard() {
   const [externalJobs, setExternalJobs] = useState([]);
   const [externalJobsLoading, setExternalJobsLoading] = useState(true);
   const [discoveryLoading, setDiscoveryLoading] = useState(false);
+  const [runningSourceId, setRunningSourceId] = useState(null);
   const [discoveryMessage, setDiscoveryMessage] = useState("");
   const [discoveryError, setDiscoveryError] = useState("");
   const [busyExternalJobId, setBusyExternalJobId] = useState(null);
@@ -159,6 +161,11 @@ function AdminDashboard() {
       crawl4AiDemoSource?.trust_status === "approved"
   );
   const crawl4AiDemoAvailable = process.env.NODE_ENV !== "production";
+  const realDiscoverySources = useMemo(
+    () =>
+      externalSources.filter((source) => source.source_key !== "crawl4ai_demo"),
+    [externalSources]
+  );
 
   useEffect(() => {
     const loadAdminWorkspace = async () => {
@@ -621,6 +628,65 @@ function AdminDashboard() {
       );
     } finally {
       setDiscoveryLoading(false);
+    }
+  };
+
+  const handleRunAllowlistedDiscovery = async (source) => {
+    try {
+      const token = localStorage.getItem("token");
+
+      if (!token) {
+        setDiscoveryError("Please sign in again to run discovery.");
+        return;
+      }
+
+      const allowed =
+        source.is_enabled &&
+        source.trust_status === "approved" &&
+        source.real_crawl_allowed;
+      if (!allowed) {
+        setDiscoveryError(
+          "Approve, enable, and explicitly allow this source for read-only crawling first."
+        );
+        return;
+      }
+
+      setRunningSourceId(source.external_source_id);
+      setDiscoveryMessage("");
+      setDiscoveryError("");
+
+      const response = await runAllowlistedSourceDiscovery(
+        token,
+        source.external_source_id
+      );
+      const result = response.data || {};
+
+      if (!result.success) {
+        throw new Error(result.message || "Read-only discovery failed");
+      }
+
+      await Promise.all([fetchExternalJobs(), fetchExternalSources()]);
+      setDiscoveryMessage(
+        `${source.source_name} discovery completed. Discovered: ${
+          result.discovered_count ?? 0
+        }; inserted: ${result.inserted_count ?? 0}; updated: ${
+          result.updated_count ?? 0
+        }. Newly inserted jobs are pending admin review.`
+      );
+    } catch (requestError) {
+      console.log(
+        "ADMIN ALLOWLISTED DISCOVERY ERROR:",
+        requestError.response?.data || requestError.message
+      );
+      setDiscoveryError(
+        requestError.response?.data?.message ||
+          requestError.response?.data?.error ||
+          requestError.message ||
+          "Read-only discovery could not be completed. Confirm the backend and AI worker are running."
+      );
+      await fetchExternalSources();
+    } finally {
+      setRunningSourceId(null);
     }
   };
 
@@ -1299,6 +1365,19 @@ function AdminDashboard() {
                         >
                           {source.is_enabled ? "Enabled" : "Disabled"}
                         </span>
+                        <span
+                          className={`status-badge ${
+                            source.real_crawl_allowed
+                              ? "status-approved"
+                              : "status-hidden"
+                          }`}
+                        >
+                          {isCrawl4AiDemo
+                            ? "Local demo only"
+                            : source.real_crawl_allowed
+                            ? "Read-only crawl allowed"
+                            : "Real crawl disabled"}
+                        </span>
                       </div>
                       <h3>{source.source_name}</h3>
                       <code>{source.source_key}</code>
@@ -1334,6 +1413,27 @@ function AdminDashboard() {
                     <div className="admin-safe-source-note">
                       <strong>Safe raw local demo HTML only</strong>
                       <span>No external website contacted.</span>
+                    </div>
+                  )}
+
+                  {!isCrawl4AiDemo && (
+                    <div className="admin-readonly-source-note">
+                      <strong>Read-only discovery</strong>
+                      <span>No applications are submitted. Login and form automation are prohibited.</span>
+                    </div>
+                  )}
+
+                  {source.last_discovery_run_at && (
+                    <div className="admin-source-run-summary">
+                      <span>
+                        Last run: {formatCreatedDate(source.last_discovery_run_at)}
+                      </span>
+                      <span className={statusClass(source.last_discovery_status)}>
+                        {String(source.last_discovery_status || "unknown").replace(/_/g, " ")}
+                      </span>
+                      {source.last_discovery_message && (
+                        <p>{source.last_discovery_message}</p>
+                      )}
                     </div>
                   )}
 
@@ -1413,6 +1513,31 @@ function AdminDashboard() {
                     >
                       {sourceBusy ? "Updating..." : "Save Notes"}
                     </button>
+                    {!isCrawl4AiDemo && (
+                      <button
+                        type="button"
+                        className={
+                          source.real_crawl_allowed
+                            ? "secondary-button small-button"
+                            : "primary-button small-button"
+                        }
+                        onClick={() =>
+                          handleExternalSourceUpdate(source.external_source_id, {
+                            real_crawl_allowed: !source.real_crawl_allowed,
+                          })
+                        }
+                        disabled={
+                          sourceBusy ||
+                          (!source.real_crawl_allowed &&
+                            (!source.is_enabled ||
+                              source.trust_status !== "approved"))
+                        }
+                      >
+                        {source.real_crawl_allowed
+                          ? "Revoke Real Crawl"
+                          : "Allow Read-only Crawl"}
+                      </button>
+                    )}
                   </div>
                 </article>
               );
@@ -1468,6 +1593,88 @@ function AdminDashboard() {
                 ? "Running Demo Discovery..."
                 : "Run Crawl4AI Demo Discovery"}
             </button>
+          </div>
+
+          <div className="admin-real-discovery-section">
+            <div className="admin-real-discovery-heading">
+              <div>
+                <h3>Allowlisted web sources</h3>
+                <p>
+                  Read-only discovery. No applications are submitted. Every new
+                  job remains hidden from candidates until an admin approves it.
+                </p>
+              </div>
+              <span className="count-pill">{realDiscoverySources.length}</span>
+            </div>
+
+            {externalSourcesLoading ? (
+              <div className="inline-loading-state" role="status">
+                <span className="workspace-loading-spinner" aria-hidden="true" />
+                <span>Loading allowlisted sources...</span>
+              </div>
+            ) : realDiscoverySources.length === 0 ? (
+              <div className="empty-state-card">
+                <span className="empty-state-kicker">No web sources</span>
+                <strong>No real discovery source has been configured.</strong>
+                <p>Create one in External Sources, then approve, enable, and explicitly allow read-only crawling.</p>
+              </div>
+            ) : (
+              <div className="admin-real-discovery-list">
+                {realDiscoverySources.map((source) => {
+                  const sourceAllowed = Boolean(
+                    source.is_enabled &&
+                      source.trust_status === "approved" &&
+                      source.real_crawl_allowed &&
+                      source.base_url
+                  );
+                  const sourceRunning =
+                    runningSourceId === source.external_source_id;
+
+                  return (
+                    <article
+                      className="admin-real-discovery-card"
+                      key={source.external_source_id}
+                    >
+                      <div>
+                        <div className="admin-source-badges">
+                          <span className={statusClass(source.trust_status)}>
+                            {source.trust_status}
+                          </span>
+                          <span
+                            className={`status-badge ${
+                              sourceAllowed ? "status-approved" : "status-hidden"
+                            }`}
+                          >
+                            {sourceAllowed ? "Ready" : "Not ready"}
+                          </span>
+                        </div>
+                        <h4>{source.source_name}</h4>
+                        <p className="admin-source-reference">
+                          {source.base_url || "No source URL configured"}
+                        </p>
+                        <small>
+                          {sourceAllowed
+                            ? "Approved for a read-only page load and conservative job extraction."
+                            : "Requires approved trust, enabled status, a public URL, and explicit real crawl permission."}
+                        </small>
+                      </div>
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => handleRunAllowlistedDiscovery(source)}
+                        disabled={
+                          !sourceAllowed ||
+                          runningSourceId !== null ||
+                          discoveryLoading
+                        }
+                      >
+                        {sourceRunning ? "Running Discovery..." : "Run Discovery"}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {discoveryMessage && (
@@ -1534,6 +1741,10 @@ function AdminDashboard() {
                       <span className="source-tag">
                         {externalJob.source_platform || "External source"}
                       </span>
+                      {externalJob.discovery_source ===
+                        "allowlisted_crawl4ai" && (
+                        <span className="source-tag">Allowlisted read-only crawl</span>
+                      )}
                     </div>
                     <h3>{externalJob.job_title}</h3>
                     <p>{externalJob.company_name}</p>

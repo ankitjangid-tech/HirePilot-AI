@@ -83,6 +83,14 @@ export const runCrawl4AiDemoDiscovery = (token) => {
   );
 };
 
+export const runAllowlistedSourceDiscovery = (token, sourceId) => {
+  return API.post(
+    `/admin/external-sources/${sourceId}/run-discovery`,
+    {},
+    authHeaders(token)
+  );
+};
+
 export const reviewExternalJob = (
   token,
   externalJobId,

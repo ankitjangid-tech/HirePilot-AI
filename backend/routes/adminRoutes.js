@@ -14,6 +14,7 @@ const {
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
+  runAllowlistedSourceDiscovery,
 } = require("../controllers/adminController");
 
 router.get(
@@ -84,6 +85,13 @@ router.post(
   verifyToken,
   authorizeRole("admin"),
   runCrawl4AiDemoDiscovery
+);
+
+router.post(
+  "/external-sources/:sourceId/run-discovery",
+  verifyToken,
+  authorizeRole("admin"),
+  runAllowlistedSourceDiscovery
 );
 
 module.exports = router;

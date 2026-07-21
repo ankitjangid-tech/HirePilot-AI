@@ -6,6 +6,7 @@ const {
 } = require("../services/emailService");
 const {
   runCrawl4AiDemoDiscovery: runExternalCrawl4AiDemoDiscovery,
+  runAllowlistedSourceDiscovery: runExternalAllowlistedSourceDiscovery,
 } = require("./externalJobController");
 
 const RECRUITER_STATUSES = ["pending", "approved", "blocked"];
@@ -35,6 +36,23 @@ const optionalText = (value) => {
   }
 
   return String(value).trim() || null;
+};
+
+const isValidPublicSourceReference = (value) => {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const hostname = parsed.hostname.toLowerCase();
+    return (
+      ["http:", "https:"].includes(parsed.protocol) &&
+      !parsed.username &&
+      !parsed.password &&
+      hostname !== "localhost" &&
+      !hostname.endsWith(".localhost") &&
+      !hostname.endsWith(".local")
+    );
+  } catch (error) {
+    return false;
+  }
 };
 
 const sendRecruiterStatusEmail = async (recruiter, recruiterStatus, reason) => {
@@ -274,6 +292,7 @@ const getExternalJobs = async (req, res) => {
         ej.salary,
         ej.apply_mode,
         ej.is_active,
+        ej.discovery_source,
         COALESCE(ej.review_status, 'approved') AS review_status,
         ej.review_notes,
         ej.reviewed_by,
@@ -372,6 +391,10 @@ const getExternalSources = async (req, res) => {
         is_enabled,
         trust_status,
         safety_mode,
+        real_crawl_allowed,
+        last_discovery_run_at,
+        last_discovery_status,
+        last_discovery_message,
         notes,
         created_by,
         created_at,
@@ -493,6 +516,66 @@ const updateExternalSource = async (req, res) => {
       });
     }
 
+    const currentResult = await pool.query(
+      `SELECT
+        is_enabled,
+        trust_status,
+        real_crawl_allowed,
+        base_url,
+        source_key
+       FROM external_sources
+       WHERE external_source_id = $1
+       LIMIT 1`,
+      [sourceId]
+    );
+    const currentSource = currentResult.rows[0];
+
+    if (!currentSource) {
+      return res.status(404).json({
+        error: "External discovery source not found",
+      });
+    }
+
+    const requestedTrustStatus =
+      req.body.trust_status === undefined
+        ? currentSource.trust_status
+        : String(req.body.trust_status).trim().toLowerCase();
+    const requestedEnabled =
+      req.body.is_enabled === undefined
+        ? currentSource.is_enabled
+        : req.body.is_enabled;
+
+    if (req.body.real_crawl_allowed !== undefined) {
+      if (typeof req.body.real_crawl_allowed !== "boolean") {
+        return res.status(400).json({
+          error: "real_crawl_allowed must be true or false",
+        });
+      }
+
+      if (
+        req.body.real_crawl_allowed === true &&
+        (
+          requestedEnabled !== true ||
+          requestedTrustStatus !== "approved" ||
+          currentSource.source_key === "crawl4ai_demo" ||
+          !isValidPublicSourceReference(currentSource.base_url)
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Use a public HTTP(S) URL, then approve and enable the source before allowing real read-only crawling.",
+        });
+      }
+
+      values.push(req.body.real_crawl_allowed);
+      updates.push(`real_crawl_allowed = $${values.length}`);
+    } else if (
+      requestedEnabled !== true ||
+      requestedTrustStatus !== "approved"
+    ) {
+      updates.push("real_crawl_allowed = FALSE");
+    }
+
     if (req.body.is_enabled !== undefined) {
       if (typeof req.body.is_enabled !== "boolean") {
         return res.status(400).json({
@@ -524,7 +607,8 @@ const updateExternalSource = async (req, res) => {
 
     if (updates.length === 0) {
       return res.status(400).json({
-        error: "Provide is_enabled, trust_status, or notes to update",
+        error:
+          "Provide is_enabled, trust_status, real_crawl_allowed, or notes to update",
       });
     }
 
@@ -765,6 +849,19 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
   }
 };
 
+const runAllowlistedSourceDiscovery = async (req, res) => {
+  try {
+    return await runExternalAllowlistedSourceDiscovery(req, res);
+  } catch (error) {
+    console.log("ADMIN ALLOWLISTED DISCOVERY ERROR:", error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to run read-only allowlisted discovery",
+    });
+  }
+};
+
 module.exports = {
   getRecruiters,
   updateRecruiterStatus,
@@ -776,4 +873,5 @@ module.exports = {
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
+  runAllowlistedSourceDiscovery,
 };
