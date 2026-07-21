@@ -11,6 +11,7 @@ venv/
 
 # Environment / secrets
 .env
+*.env
 .env.*
 !.env.example
 backend/.env
@@ -77,9 +78,8 @@ __pycache__/
 tmp/
 temp/
 
-
-
-
+# Archives / local handoff bundles
+*.zip
 # Always include database migration scripts
 !database/
 !database/migrations/

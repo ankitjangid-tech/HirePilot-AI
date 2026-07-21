@@ -53,3 +53,5 @@ The script:
 - does not contact LinkedIn, Indeed, company career pages, or any other external website.
 
 Passing this script confirms service readiness, not the complete role-based workflow. Continue with [E2E_DEMO_CHECKLIST.md](../docs/E2E_DEMO_CHECKLIST.md).
+
+It is also not a production security assessment. Review [DEPLOYMENT_READINESS.md](../docs/DEPLOYMENT_READINESS.md) before publishing or deploying the repository.
