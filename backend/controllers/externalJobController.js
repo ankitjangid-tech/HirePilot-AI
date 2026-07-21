@@ -1,38 +1,11 @@
 const axios = require("axios");
 const pool = require("../config/db");
-
-const splitSkills = (skills) => {
-  if (!skills) {
-    return [];
-  }
-
-  return skills
-    .toLowerCase()
-    .split(",")
-    .map((skill) => skill.trim())
-    .filter(Boolean);
-};
-
-const normalizeSkillLabel = (skill) =>
-  skill
-    .split(" ")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+const { compareSkills } = require("../services/matchingService");
 
 const calculateExternalMatch = (candidate, job) => {
-  const candidateSkills = splitSkills(candidate.skills);
-  const jobSkills = splitSkills(job.required_skills);
-
-  const matchedSkills = [];
-  const missingSkills = [];
-
-  jobSkills.forEach((skill) => {
-    if (candidateSkills.includes(skill)) {
-      matchedSkills.push(normalizeSkillLabel(skill));
-    } else {
-      missingSkills.push(normalizeSkillLabel(skill));
-    }
-  });
+  const comparison = compareSkills(candidate.skills, job.required_skills);
+  const matchedSkills = comparison.matchedSkills.map((skill) => skill.label);
+  const missingSkills = comparison.missingSkills.map((skill) => skill.label);
 
   let score = matchedSkills.length * 20;
 

@@ -103,7 +103,7 @@ JWT_EXPIRES_IN=1d
 FRONTEND_URL=http://localhost:3000
 
 EMAIL_USER=your_sender_email@example.com
-EMAIL_PASS=your_email_provider_secret
+EMAIL_PASS=your_email_app_password
 RESET_TOKEN_EXPIRES_MINUTES=15
 
 NODE_ENV=development
@@ -124,8 +124,27 @@ Important details:
 - The Python worker deliberately reads database and worker settings from `backend/.env`.
 - The current Express entrypoint listens on port `5000` directly.
 - `NODE_ENV=development` is required for the development-only safe discovery and reset controls.
-- Password-reset email requires a configured SMTP account. It is not required for the main dashboard demo.
-- Never use a real personal mailbox or app password in a public demo repository.
+- The current email service uses Gmail through Nodemailer. `EMAIL_PASS` must be a provider-generated app password, not the mailbox password.
+- If `EMAIL_USER` or `EMAIL_PASS` is missing or still contains a placeholder, database updates and in-app notifications continue while email is skipped gracefully.
+- Never use a real personal mailbox or include an app password in the repository, documentation, screenshots, or terminal recordings.
+
+### Configure notification email locally
+
+Email is sent for Candidate shortlist/rejection events, interview schedule/reschedule/cancellation, Recruiter approval/blocking, and company verified/rejected/needs-review events.
+
+1. Use a dedicated local testing mailbox with multi-factor authentication.
+2. Generate a provider app password.
+3. Put the sender address and app password only in the ignored `backend/.env`:
+
+   ```dotenv
+   EMAIL_USER=your_configured_sender@example.com
+   EMAIL_PASS=your_generated_app_password
+   ```
+
+4. Restart `node server.js` after changing the environment.
+5. Trigger one status transition and confirm both the in-app result and inbox delivery.
+
+Do not repeatedly toggle real Candidate or Recruiter statuses merely to test delivery. The backend avoids email for unchanged application, Recruiter, company, and interview states where possible.
 
 ## 5. Prepare PostgreSQL
 
@@ -362,6 +381,14 @@ Restart the worker. On Windows, the project uses an isolated child-process worka
 ### Recruiter cannot post a job
 
 Open the Admin Control Panel and approve the recruiter. A pending or blocked recruiter correctly receives HTTP `403`; company verification is currently recommended but is not the posting gate.
+
+### Platform action succeeds but email is skipped
+
+- Confirm both `EMAIL_USER` and `EMAIL_PASS` are set in `backend/.env` and are not placeholder values.
+- Confirm the app password belongs to the configured sender account.
+- Restart the backend after changing environment variables.
+- Review the backend terminal for a safe `[EMAIL]` status message. Credentials are never printed.
+- A skipped or failed email does not remove the database notification or roll back the status/interview/Admin action.
 
 ### Demo jobs are missing for candidates
 

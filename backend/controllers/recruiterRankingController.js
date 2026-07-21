@@ -1,21 +1,11 @@
 const pool = require("../config/db");
+const { compareSkills } = require("../services/matchingService");
 
 const CONTACT_VISIBLE_STATUSES = new Set([
   "Shortlisted",
   "Interview Scheduled",
   "Selected",
 ]);
-
-const normalizeSkills = (skillsText) => {
-  if (!skillsText) {
-    return [];
-  }
-
-  return String(skillsText)
-    .split(",")
-    .map((skill) => skill.trim())
-    .filter(Boolean);
-};
 
 const rankApplicants = async (req, res) => {
   try {
@@ -55,8 +45,6 @@ const rankApplicants = async (req, res) => {
     }
 
     const job = jobCheck.rows[0];
-    const requiredSkills = normalizeSkills(job.required_skills);
-
     const result = await pool.query(
       `SELECT DISTINCT ON (c.candidate_id)
         a.application_id,
@@ -116,17 +104,15 @@ const rankApplicants = async (req, res) => {
     );
 
     const rankedCandidates = result.rows.map((candidate) => {
-      const candidateSkills = normalizeSkills(candidate.skills);
-      const candidateSkillLowerSet = new Set(
-        candidateSkills.map((skill) => skill.toLowerCase())
+      const skillComparison = compareSkills(
+        candidate.skills,
+        job.required_skills
       );
-
-      const matchedSkills = requiredSkills.filter((skill) =>
-        candidateSkillLowerSet.has(skill.toLowerCase())
+      const matchedSkills = skillComparison.matchedSkills.map(
+        (skill) => skill.label
       );
-
-      const missingSkills = requiredSkills.filter(
-        (skill) => !candidateSkillLowerSet.has(skill.toLowerCase())
+      const missingSkills = skillComparison.missingSkills.map(
+        (skill) => skill.label
       );
 
       const atsScore = Number(candidate.ats_score || 0);

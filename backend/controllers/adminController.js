@@ -1,5 +1,10 @@
 const pool = require("../config/db");
 const {
+  buildEmailHtml,
+  getEmailDeliveryMessage,
+  sendEmail,
+} = require("../services/emailService");
+const {
   runCrawl4AiDemoDiscovery: runExternalCrawl4AiDemoDiscovery,
 } = require("./externalJobController");
 
@@ -30,6 +35,90 @@ const optionalText = (value) => {
   }
 
   return String(value).trim() || null;
+};
+
+const sendRecruiterStatusEmail = async (recruiter, recruiterStatus, reason) => {
+  const approved = recruiterStatus === "approved";
+  const subject = approved
+    ? "Your HirePilot recruiter account is approved"
+    : "Your HirePilot recruiter account has been blocked";
+  const title = approved
+    ? "Recruiter account approved"
+    : "Recruiter account blocked";
+  const paragraphs = approved
+    ? [
+        "Your Recruiter Workspace is approved, and you can now publish jobs on HirePilot AI.",
+        "Company verification remains a separate trust review shown to Candidates.",
+      ]
+    : [
+        "Your Recruiter account has been blocked, and job publishing is unavailable.",
+        reason || "Contact the HirePilot administrator if you need more information.",
+      ];
+
+  return sendEmail(
+    recruiter.email,
+    subject,
+    buildEmailHtml({
+      recipientName: recruiter.full_name,
+      title,
+      paragraphs,
+      details: [{ label: "Account status", value: recruiterStatus }],
+    })
+  );
+};
+
+const sendCompanyVerificationEmail = async ({
+  company,
+  recruiter,
+  verificationStatus,
+}) => {
+  const contentByStatus = {
+    verified: {
+      subject: `${company.company_name} is verified on HirePilot AI`,
+      title: "Company profile verified",
+      paragraphs: [
+        `${company.company_name} has been verified by a HirePilot administrator.`,
+        "Candidates can now see the Verified Employer trust indicator on eligible jobs.",
+      ],
+    },
+    rejected: {
+      subject: `Company verification update for ${company.company_name}`,
+      title: "Company verification rejected",
+      paragraphs: [
+        `${company.company_name} was not approved during the current verification review.`,
+        company.verification_notes ||
+          "Review the Company Profile tab and contact the HirePilot administrator if clarification is needed.",
+      ],
+    },
+    needs_review: {
+      subject: `Company profile needs review: ${company.company_name}`,
+      title: "Company profile needs additional review",
+      paragraphs: [
+        `${company.company_name} requires additional review before it can be shown as a verified employer.`,
+        company.verification_notes ||
+          "Review the Company Profile tab for the latest verification guidance.",
+      ],
+    },
+  };
+  const content = contentByStatus[verificationStatus];
+
+  if (!content) {
+    return null;
+  }
+
+  return sendEmail(
+    recruiter.email,
+    content.subject,
+    buildEmailHtml({
+      recipientName: recruiter.full_name,
+      title: content.title,
+      paragraphs: content.paragraphs,
+      details: [
+        { label: "Company", value: company.company_name },
+        { label: "Verification status", value: verificationStatus.replace(/_/g, " ") },
+      ],
+    })
+  );
 };
 
 const getRecruiters = async (req, res) => {
@@ -95,6 +184,7 @@ const updateRecruiterStatus = async (req, res) => {
            recruiter_status_updated_at = CURRENT_TIMESTAMP
        WHERE user_id = $1
        AND role = 'recruiter'
+       AND COALESCE(recruiter_status, 'pending') <> $2
        RETURNING
          user_id,
          full_name,
@@ -111,14 +201,54 @@ const updateRecruiterStatus = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Recruiter account not found",
+      const existingResult = await pool.query(
+        `SELECT
+          user_id,
+          full_name,
+          email,
+          COALESCE(recruiter_status, 'pending') AS recruiter_status,
+          recruiter_status_reason,
+          recruiter_status_updated_at,
+          created_at
+         FROM users
+         WHERE user_id = $1
+         AND role = 'recruiter'`,
+        [recruiterUserId]
+      );
+
+      if (existingResult.rows.length === 0) {
+        return res.status(404).json({
+          error: "Recruiter account not found",
+        });
+      }
+
+      return res.status(200).json({
+        message: `Recruiter account is already ${recruiterStatus}. No email was sent.`,
+        recruiter: existingResult.rows[0],
+        email_delivery: {
+          sent: false,
+          configured: null,
+          status: "skipped_unchanged",
+        },
       });
     }
 
+    const recruiter = result.rows[0];
+    const emailDelivery = ["approved", "blocked"].includes(recruiterStatus)
+      ? await sendRecruiterStatusEmail(
+          recruiter,
+          recruiterStatus,
+          recruiter.recruiter_status_reason
+        )
+      : null;
+    const emailMessage = emailDelivery
+      ? ` ${getEmailDeliveryMessage(emailDelivery)}`
+      : "";
+
     return res.status(200).json({
-      message: `Recruiter account ${recruiterStatus}.`,
-      recruiter: result.rows[0],
+      message: `Recruiter account ${recruiterStatus}.${emailMessage}`,
+      recruiter,
+      email_delivery: emailDelivery,
     });
   } catch (error) {
     console.log("ADMIN RECRUITER STATUS UPDATE ERROR:", error.message);
@@ -484,6 +614,7 @@ const updateCompanyVerification = async (req, res) => {
       req.body.verification_notes !== undefined;
     const updates = [];
     const values = [companyId];
+    let verificationStatus = null;
 
     if (!companyId) {
       return res.status(400).json({
@@ -492,7 +623,7 @@ const updateCompanyVerification = async (req, res) => {
     }
 
     if (req.body.verification_status !== undefined) {
-      const verificationStatus = String(
+      verificationStatus = String(
         req.body.verification_status
       ).trim().toLowerCase();
 
@@ -527,6 +658,27 @@ const updateCompanyVerification = async (req, res) => {
       });
     }
 
+    const previousCompanyResult = await pool.query(
+      `SELECT
+        rc.verification_status,
+        rc.company_name,
+        recruiter.full_name AS recruiter_name,
+        recruiter.email AS recruiter_email
+       FROM recruiter_companies rc
+       JOIN users recruiter
+       ON recruiter.user_id = rc.recruiter_id
+       WHERE rc.company_id = $1`,
+      [companyId]
+    );
+
+    if (previousCompanyResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Recruiter company profile not found",
+      });
+    }
+
+    const previousCompany = previousCompanyResult.rows[0];
+
     const result = await pool.query(
       `UPDATE recruiter_companies
        SET ${updates.join(", ")},
@@ -536,17 +688,34 @@ const updateCompanyVerification = async (req, res) => {
       values
     );
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        error: "Recruiter company profile not found",
-      });
-    }
+    const company = result.rows[0];
+    const verificationChanged = Boolean(
+      verificationStatus &&
+        previousCompany.verification_status !== verificationStatus
+    );
+    const emailDelivery = verificationChanged
+      ? await sendCompanyVerificationEmail({
+          company,
+          recruiter: {
+            full_name: previousCompany.recruiter_name,
+            email: previousCompany.recruiter_email,
+          },
+          verificationStatus,
+        })
+      : null;
+    const baseMessage = isNotesOnlyUpdate
+      ? "Company verification notes saved."
+      : verificationChanged
+      ? "Company verification updated."
+      : "Company verification saved with no status change. No email was sent.";
+    const emailMessage = emailDelivery
+      ? ` ${getEmailDeliveryMessage(emailDelivery)}`
+      : "";
 
     return res.status(200).json({
-      message: isNotesOnlyUpdate
-        ? "Company verification notes saved."
-        : "Company verification updated.",
-      company: result.rows[0],
+      message: `${baseMessage}${emailMessage}`,
+      company,
+      email_delivery: emailDelivery,
     });
   } catch (error) {
     console.log("ADMIN COMPANY VERIFICATION ERROR:", error.message);

@@ -1,79 +1,62 @@
 const pool = require("../config/db");
+const { calculatePercentageScore } = require("../services/matchingService");
 
-const matchJobs = async(req,res)=>{
+const matchJobs = async (req, res) => {
+  try {
+    const candidateResult = await pool.query(
+      `SELECT
+        candidate_id,
+        skills,
+        preferred_role,
+        experience_years
+       FROM candidates
+       WHERE user_id = $1`,
+      [req.user.user_id]
+    );
 
-try{
+    if (candidateResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
 
-const user_id=req.user.user_id;
+    const candidate = candidateResult.rows[0];
+    const jobsResult = await pool.query(
+      `SELECT
+        job_id,
+        job_title,
+        company_name,
+        required_skills,
+        experience_required
+       FROM jobs`
+    );
 
-const candidate=await pool.query(
+    const matchedJobs = jobsResult.rows.map((job) => {
+      const match = calculatePercentageScore(
+        candidate.skills,
+        job.required_skills
+      );
 
-`SELECT * FROM candidates
-WHERE user_id=$1`,
-[user_id]
+      return {
+        job_id: job.job_id,
+        job_title: job.job_title,
+        company_name: job.company_name,
+        match_score: match.matchScore,
+        matched_skills: match.matchedSkills.map((skill) => skill.label),
+        missing_skills: match.missingSkills.map((skill) => skill.label),
+      };
+    });
 
-);
+    return res.status(200).json({
+      matchedJobs,
+    });
+  } catch (error) {
+    console.log("JOB MATCH ERROR:", error.message);
 
-const candidateData=candidate.rows[0];
-
-const jobs=await pool.query(
-`SELECT * FROM jobs`
-);
-
-const matchedJobs=[];
-
-jobs.rows.forEach(job=>{
-
-const candidateSkills =
-candidateData.skills
-.toLowerCase()
-.split(",")
-.map(skill=>skill.trim());
-
-const requiredSkills =
-job.required_skills
-.toLowerCase()
-.split(",")
-.map(skill=>skill.trim());
-
-const matched=
-candidateSkills.filter(skill=>
-requiredSkills.includes(skill)
-);
-
-const score=
-(Math.round(
-(matched.length/
-requiredSkills.length)
-*100
-));
-
-matchedJobs.push({
-
-job_id:job.job_id,
-job_title:job.job_title,
-company_name:job.company_name,
-match_score:score
-
-});
-
-});
-
-res.status(200).json({
-matchedJobs
-});
-
-}
-catch(error){
-
-console.log(error);
-
-res.status(500).json({
-error:"Matching failed"
-});
-
-}
-
+    return res.status(500).json({
+      error: "Matching failed",
+    });
+  }
 };
 
-module.exports={matchJobs};
+module.exports = { matchJobs };
