@@ -1,20 +1,5 @@
 const pool=require("../config/db");
-
-const parseSkills=(skills)=>{
-
-if(!skills){
-
-return [];
-
-}
-
-return skills
-.toLowerCase()
-.split(",")
-.map((skill)=>skill.trim())
-.filter(Boolean);
-
-};
+const { calculateFixedSkillScore } = require("../services/matchingService");
 
 const isProfileIncomplete=(candidate)=>{
 
@@ -27,37 +12,6 @@ Number(candidate.experience_years)<0 ||
 !candidate.preferred_location ||
 !candidate.expected_salary
 );
-
-};
-
-const calculateMatchScore=(candidateSkills,jobRequiredSkills)=>{
-
-if(!jobRequiredSkills){
-
-return 0;
-
-}
-
-let score=0;
-
-const jobSkills=
-jobRequiredSkills
-.toLowerCase()
-.split(",")
-.map((skill)=>skill.trim())
-.filter(Boolean);
-
-jobSkills.forEach((skill)=>{
-
-if(candidateSkills.includes(skill)){
-
-score+=20;
-
-}
-
-});
-
-return Math.min(score,100);
 
 };
 
@@ -112,9 +66,6 @@ error:"Please complete your profile before using Auto Apply"
 const candidateDBId=
 candidate.candidate_id;
 
-const candidateSkills=
-parseSkills(candidate.skills);
-
 const jobsResult=
 await pool.query(
 
@@ -135,10 +86,10 @@ const skippedJobs=[];
 for(const job of jobsResult.rows){
 
 const matchScore=
-calculateMatchScore(
-candidateSkills,
+calculateFixedSkillScore(
+candidate.skills,
 job.required_skills
-);
+).matchScore;
 
 if(matchScore<40){
 

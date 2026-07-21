@@ -1,9 +1,28 @@
 const pool = require("../config/db");
-const { sendEmail } = require("../services/emailService");
+const {
+  buildEmailHtml,
+  getEmailDeliveryMessage,
+  sendEmail,
+} = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 
 const buildMeetingLink = () =>
   "https://meet.google.com/" + Math.random().toString(36).substring(2, 10);
+
+const normalizeDateValue = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  return String(value).slice(0, 10);
+};
+
+const normalizeTimeValue = (value) =>
+  value ? String(value).slice(0, 5) : "";
 
 const getCandidateUser = async (candidateId) => {
   const userResult = await pool.query(
@@ -29,28 +48,37 @@ const sendInterviewEmail = async ({
   interviewTime,
   meetingLink,
 }) => {
-  const user = await getCandidateUser(candidateId);
+  try {
+    const user = await getCandidateUser(candidateId);
 
-  if (!user) {
-    return;
+    if (!user) {
+      return sendEmail(null, subject, "");
+    }
+
+    return sendEmail(
+      user.email,
+      subject,
+      buildEmailHtml({
+        recipientName: user.full_name,
+        title: heading,
+        paragraphs: [message],
+        details: [
+          { label: "Date", value: interviewDate },
+          { label: "Time", value: interviewTime },
+          { label: "Meeting link", value: meetingLink },
+        ],
+      })
+    );
+  } catch (error) {
+    console.warn(
+      "[EMAIL] Interview notification preparation failed. The interview update remains complete."
+    );
+    return {
+      sent: false,
+      configured: null,
+      status: "failed",
+    };
   }
-
-  const meetingHtml = meetingLink
-    ? `<p>Meeting Link: <a href="${meetingLink}">Join Interview</a></p>`
-    : "";
-
-  await sendEmail(
-    user.email,
-    subject,
-    `
-    <h2>Hello ${user.full_name}</h2>
-    <p>${heading}</p>
-    <p>${message}</p>
-    ${interviewDate ? `<p>Date: ${interviewDate}</p>` : ""}
-    ${interviewTime ? `<p>Time: ${interviewTime}</p>` : ""}
-    ${meetingHtml}
-    `
-  );
 };
 
 const getOwnedApplication = async (applicationId, recruiterUserId) => {
@@ -190,7 +218,7 @@ const scheduleInterview = async (req, res) => {
       referenceId: interview.interview_id,
     });
 
-    await sendInterviewEmail({
+    const emailDelivery = await sendInterviewEmail({
       candidateId: application.candidate_id,
       subject: "HirePilot AI - Interview Scheduled",
       heading: "Your interview has been scheduled.",
@@ -201,8 +229,9 @@ const scheduleInterview = async (req, res) => {
     });
 
     return res.status(201).json({
-      message: "Interview scheduled",
+      message: `Interview scheduled. ${getEmailDeliveryMessage(emailDelivery)}`,
       interview,
+      email_delivery: emailDelivery,
       application: {
         application_id: Number(application_id),
         application_status: "Interview Scheduled",
@@ -243,6 +272,27 @@ const rescheduleInterview = async (req, res) => {
       });
     }
 
+    if (
+      normalizeDateValue(interview.interview_date) ===
+        normalizeDateValue(interview_date) &&
+      normalizeTimeValue(interview.interview_time) ===
+        normalizeTimeValue(interview_time)
+    ) {
+      return res.status(200).json({
+        message: "Interview date and time are already up to date. No email was sent.",
+        interview,
+        email_delivery: {
+          sent: false,
+          configured: null,
+          status: "skipped_unchanged",
+        },
+        application: {
+          application_id: interview.application_id,
+          application_status: "Interview Scheduled",
+        },
+      });
+    }
+
     const result = await pool.query(
       `UPDATE interviews
        SET interview_date=$1,
@@ -273,7 +323,7 @@ const rescheduleInterview = async (req, res) => {
       replaceExisting: true,
     });
 
-    await sendInterviewEmail({
+    const emailDelivery = await sendInterviewEmail({
       candidateId: interview.candidate_id,
       subject: "HirePilot AI - Interview Rescheduled",
       heading: "Your interview has been rescheduled.",
@@ -284,8 +334,9 @@ const rescheduleInterview = async (req, res) => {
     });
 
     return res.status(200).json({
-      message: "Interview rescheduled",
+      message: `Interview rescheduled. ${getEmailDeliveryMessage(emailDelivery)}`,
       interview: updatedInterview,
+      email_delivery: emailDelivery,
       application: {
         application_id: interview.application_id,
         application_status: "Interview Scheduled",
@@ -354,7 +405,7 @@ const cancelInterview = async (req, res) => {
       replaceExisting: true,
     });
 
-    await sendInterviewEmail({
+    const emailDelivery = await sendInterviewEmail({
       candidateId: interview.candidate_id,
       subject: "HirePilot AI - Interview Cancelled",
       heading: "Your interview has been cancelled.",
@@ -362,8 +413,9 @@ const cancelInterview = async (req, res) => {
     });
 
     return res.status(200).json({
-      message: "Interview cancelled",
+      message: `Interview cancelled. ${getEmailDeliveryMessage(emailDelivery)}`,
       interview: cancelledInterview,
+      email_delivery: emailDelivery,
       application: {
         application_id: interview.application_id,
         application_status: "Shortlisted",

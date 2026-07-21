@@ -2,6 +2,7 @@ const pdfParse = require("pdf-parse");
 const fs = require("fs");
 const path = require("path");
 const pool = require("../config/db");
+const { normalizeSkills } = require("../services/matchingService");
 
 const uploadsDir = path.join(__dirname, "..", "uploads");
 
@@ -65,27 +66,38 @@ const uploadResume = async (req, res) => {
     const dataBuffer = fs.readFileSync(req.file.path);
     const pdfData = await pdfParse(dataBuffer);
     const resumeText = pdfData.text;
+    const candidateProfileResult = await pool.query(
+      `SELECT skills
+       FROM candidates
+       WHERE user_id = $1`,
+      [req.user.user_id]
+    );
 
-    const skills = [];
+    if (candidateProfileResult.rows.length === 0) {
+      return res.status(404).json({
+        error: "Candidate profile not found",
+      });
+    }
 
-    const skillList = [
-      "Python",
-      "SQL",
-      "React",
-      "Java",
-      "JavaScript",
-      "HTML",
-      "CSS",
-      "Node.js",
-      "Express",
-      "PostgreSQL",
-    ];
-
-    skillList.forEach((skill) => {
-      if (resumeText.toLowerCase().includes(skill.toLowerCase())) {
-        skills.push(skill);
-      }
-    });
+    const platformSkillResult = await pool.query(
+      `SELECT required_skills
+       FROM jobs
+       WHERE required_skills IS NOT NULL
+       UNION ALL
+       SELECT required_skills
+       FROM external_jobs
+       WHERE required_skills IS NOT NULL
+       AND is_active = TRUE
+       AND (review_status IS NULL OR review_status = 'approved')`
+    );
+    const skillVocabulary = normalizeSkills([
+      candidateProfileResult.rows[0].skills,
+      ...platformSkillResult.rows.map((job) => job.required_skills),
+    ]);
+    const normalizedResumeText = resumeText.toLowerCase();
+    const skills = skillVocabulary
+      .filter((skill) => normalizedResumeText.includes(skill.key))
+      .map((skill) => skill.label);
 
     let experience = "Not Found";
 

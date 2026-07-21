@@ -1,20 +1,89 @@
 const pool = require("../config/db");
-const { sendEmail } = require("../services/emailService");
+const {
+  buildEmailHtml,
+  getEmailDeliveryMessage,
+  sendEmail,
+} = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 
 const allowedStatuses = ["Shortlisted", "Rejected", "Selected"];
 
-const getCandidateUser = async (candidateId) => {
+const getApplicationEmailContext = async (candidateId, jobId) => {
   const userResult = await pool.query(
-    `SELECT u.email, u.full_name
+    `SELECT
+      u.email,
+      u.full_name,
+      j.job_title,
+      j.company_name
      FROM users u
      JOIN candidates c
      ON u.user_id=c.user_id
+     JOIN jobs j
+     ON j.job_id=$2
      WHERE c.candidate_id=$1`,
-    [candidateId]
+    [candidateId, jobId]
   );
 
-  return userResult.rows[0];
+  return userResult.rows[0] || null;
+};
+
+const sendApplicationStatusEmail = async ({ context, applicationStatus }) => {
+  if (!context) {
+    return sendEmail(null, "HirePilot AI - Application Update", "");
+  }
+
+  const isShortlisted = applicationStatus === "Shortlisted";
+  const subject = isShortlisted
+    ? `You're shortlisted for ${context.job_title}`
+    : `Application update for ${context.job_title}`;
+  const title = isShortlisted
+    ? "You have been shortlisted"
+    : "Your application was not selected";
+  const paragraphs = isShortlisted
+    ? [
+        `${context.company_name} shortlisted your application for ${context.job_title}.`,
+        "The recruiter may contact you or schedule an interview through HirePilot AI.",
+      ]
+    : [
+        `${context.company_name} has completed its review for ${context.job_title}, and your application was not selected.`,
+        "Thank you for applying. You can continue reviewing other matched opportunities in HirePilot AI.",
+      ];
+
+  return sendEmail(
+    context.email,
+    subject,
+    buildEmailHtml({
+      recipientName: context.full_name,
+      title,
+      paragraphs,
+      details: [
+        { label: "Role", value: context.job_title },
+        { label: "Company", value: context.company_name },
+        { label: "Status", value: applicationStatus },
+      ],
+    })
+  );
+};
+
+const deliverApplicationStatusEmail = async ({
+  candidateId,
+  jobId,
+  applicationStatus,
+}) => {
+  try {
+    const context = await getApplicationEmailContext(candidateId, jobId);
+
+    return await sendApplicationStatusEmail({ context, applicationStatus });
+  } catch (error) {
+    console.warn(
+      "[EMAIL] Application notification preparation failed. The status update remains complete."
+    );
+    return {
+      sent: false,
+      configured: null,
+      status: "failed",
+    };
+  }
 };
 
 const updateApplicationStatus = async (req, res) => {
@@ -35,18 +104,21 @@ const updateApplicationStatus = async (req, res) => {
 
     const currentResult = await pool.query(
       `SELECT
-        application_id,
-        application_status,
-        candidate_id,
-        job_id
-       FROM applications
-       WHERE application_id=$1`,
-      [application_id]
+        a.application_id,
+        a.application_status,
+        a.candidate_id,
+        a.job_id
+       FROM applications a
+       JOIN jobs j
+       ON j.job_id = a.job_id
+       WHERE a.application_id=$1
+       AND j.recruiter_id=$2`,
+      [application_id, req.user.user_id]
     );
 
     if (currentResult.rows.length === 0) {
       return res.status(404).json({
-        error: "Application not found",
+        error: "Application not found for this recruiter",
       });
     }
 
@@ -66,11 +138,32 @@ const updateApplicationStatus = async (req, res) => {
       `UPDATE applications
        SET application_status=$1
        WHERE application_id=$2
+       AND application_status IS DISTINCT FROM $1
        RETURNING *`,
       [application_status, application_id]
     );
 
+    if (result.rows.length === 0) {
+      const latestResult = await pool.query(
+        `SELECT *
+         FROM applications
+         WHERE application_id=$1`,
+        [application_id]
+      );
+
+      return res.status(200).json({
+        message: "Status already updated. No email was sent.",
+        application: latestResult.rows[0] || currentApplication,
+        email_delivery: {
+          sent: false,
+          configured: null,
+          status: "skipped_unchanged",
+        },
+      });
+    }
+
     const application = result.rows[0];
+    let emailDelivery = null;
 
     if (application_status === "Shortlisted") {
       await createNotification({
@@ -81,18 +174,11 @@ const updateApplicationStatus = async (req, res) => {
         referenceId: Number(application_id),
       });
 
-      const user = await getCandidateUser(candidateId);
-
-      if (user) {
-        await sendEmail(
-          user.email,
-          "HirePilot AI - Application Update",
-          `
-          <h2>Hello ${user.full_name}</h2>
-          <p>Congratulations! You have been shortlisted for the next hiring stage.</p>
-          `
-        );
-      }
+      emailDelivery = await deliverApplicationStatusEmail({
+        candidateId,
+        jobId,
+        applicationStatus: "Shortlisted",
+      });
     }
 
     if (application_status === "Rejected") {
@@ -112,6 +198,12 @@ const updateApplicationStatus = async (req, res) => {
         referenceType: "application",
         referenceId: Number(application_id),
       });
+
+      emailDelivery = await deliverApplicationStatusEmail({
+        candidateId,
+        jobId,
+        applicationStatus: "Rejected",
+      });
     }
 
     if (application_status === "Selected") {
@@ -124,9 +216,14 @@ const updateApplicationStatus = async (req, res) => {
       });
     }
 
+    const emailMessage = emailDelivery
+      ? ` ${getEmailDeliveryMessage(emailDelivery)}`
+      : "";
+
     res.status(200).json({
-      message: "Status updated",
+      message: `Status updated.${emailMessage}`,
       application,
+      email_delivery: emailDelivery,
     });
   } catch (error) {
     console.log(error);
