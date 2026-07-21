@@ -1,98 +1,211 @@
-# HirePilot AI
+# HirePilot AI — AI Recruitment Automation Platform
 
-HirePilot AI is a full-stack HR and AI recruitment platform. It supports candidate profiles, resume upload, ATS scoring, job matching, auto-apply workflows, pending-application fallback, recruiter job posting, applicant ranking, shortlist/reject actions, interview scheduling, dashboard notifications, and email-based password reset.
+HirePilot AI is a full-stack recruitment workflow platform for candidates, recruiters, and platform administrators. It combines profile and resume intelligence, job matching, recruiter hiring workflows, governed external-job discovery, and a safe local automation foundation in one role-based application.
 
-This repository is intended as a professional portfolio/commercial-grade project, not a basic tutorial demo.
+The current repository is a development and portfolio-ready foundation. External discovery and browser automation are intentionally limited to local demo content and simulations; production deployment and real external-portal integrations are not complete.
 
-## Tech Stack
+## Product roles
 
-```text
-Frontend: React
-Backend: Node.js + Express
-Database: PostgreSQL
-Authentication: JWT + bcrypt
-Email: SMTP/Nodemailer in development
-AI roadmap: Python/LangGraph + browser automation
+### Candidate
+
+Candidates maintain a professional profile and resume, review matched internal and approved external jobs, track applications, handle manual fallbacks, view interviews and notifications, and inspect AI-agent run progress.
+
+### Recruiter
+
+Recruiters maintain a company profile, publish jobs after admin approval, review ranked applicants, inspect candidate profiles and resumes, shortlist or reject applicants, and manage interviews.
+
+### Admin
+
+Admins govern recruiter access, verify recruiter companies, manage the external-source allowlist, run the safe Crawl4AI demo discovery operation, and approve, hide, reject, or return discovered jobs to pending review.
+
+## Core features
+
+- JWT authentication and role-based access control (RBAC)
+- Candidate profile completion and PDF resume parsing
+- ATS score and AI-assisted job matching
+- Recruiter job posting with admin approval enforcement
+- Applicant ranking, candidate preview, shortlist, and rejection workflows
+- Interview scheduling, rescheduling, cancellation, and candidate notifications
+- Internal and external application tracking
+- Candidate Application Control Center with pending manual actions
+- External job discovery simulation and source preview
+- Crawl4AI safe raw-HTML demo discovery
+- Playwright safe dummy browser-apply flow
+- Manual fallback and candidate completion workflow
+- AI Agent Timeline with steps, status filters, retry, and cancel controls
+- Admin recruiter approval and blocking
+- Admin external-source allowlist and trust controls
+- Admin external-job moderation
+- Recruiter company profiles and admin company verification
+- Verified Employer and Reviewed by HirePilot trust indicators
+
+## Technology stack
+
+| Layer | Technology |
+| --- | --- |
+| Web application | React, React Router, Axios |
+| API | Node.js, Express |
+| Database | PostgreSQL |
+| Authentication | JWT, bcrypt |
+| Resume processing | Multer, `pdf-parse` |
+| AI worker | Python, FastAPI, Uvicorn |
+| Safe browser foundation | Playwright with local dummy HTML |
+| Safe discovery foundation | Crawl4AI with raw local HTML |
+
+## Architecture overview
+
+```mermaid
+flowchart LR
+    U[Candidate / Recruiter / Admin] --> F[React Frontend]
+    F -->|JWT API requests| B[Node.js / Express API]
+    B --> P[(PostgreSQL)]
+    B -->|Controlled worker calls| W[Python FastAPI Worker]
+    W -->|Run and step updates| P
+    W --> S[Safe local HTML simulations]
 ```
 
-## Main Modules
+The browser never connects directly to PostgreSQL or the Python worker. The Express API authenticates users, enforces roles, owns business workflows, and coordinates worker requests. PostgreSQL stores users, profiles, jobs, applications, interviews, notifications, external-source governance, and agent-run history.
 
-```text
-Candidate
-- Login and dashboard
-- Resume upload and PDF parsing
-- ATS score
-- Profile completion
-- Matched jobs
-- Auto Apply
-- My Applications
-- Pending Applications fallback
-- Notifications and interview details
+See [Architecture](docs/ARCHITECTURE.md) for data-flow and safety details.
 
-Recruiter
-- Login and dashboard
-- Job posting
-- View applicants
-- Candidate ranking
-- Shortlist / reject
-- Schedule interview
-- Email notification flow
+## Quick start
+
+### Prerequisites
+
+- Node.js and npm
+- Python 3.10 or newer
+- PostgreSQL and `psql`
+- A local database containing HirePilot's core schema
+
+> The numbered migrations in this checkpoint are additive. They expect the original core tables—such as `users`, `candidates`, `jobs`, `applications`, `interviews`, and `notifications`—to exist before migration `001` is applied.
+
+### 1. Install dependencies
+
+```powershell
+# Backend dependencies are defined at repository root
+npm install
+
+cd frontend
+npm install
+cd ..
+
+cd ai-agent
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m playwright install chromium
+crawl4ai-setup
+cd ..
 ```
 
-## Local Setup
+### 2. Configure local environment
 
-Create a backend environment file from the example:
+Copy `backend/.env.example` to `backend/.env` and replace every placeholder locally. Never commit the resulting `.env` file.
 
-```bash
-cp backend/.env.example backend/.env
+```powershell
+Copy-Item backend/.env.example backend/.env
 ```
 
-Then fill local values in `backend/.env`.
+For worker-backed demo flows, also configure placeholder-safe worker settings described in the [Setup Guide](docs/SETUP_GUIDE.md).
 
-Start backend:
+### 3. Apply database migrations
 
-```bash
+After the core schema exists, apply `database/migrations/001_*.sql` through `011_*.sql` in filename order.
+
+```powershell
+Get-ChildItem database/migrations/*.sql |
+  Sort-Object Name |
+  ForEach-Object { psql -U postgres -d hirepilot_db -f $_.FullName }
+```
+
+### 4. Start the services
+
+Open three terminals from the repository root.
+
+AI worker:
+
+```powershell
+cd ai-agent
+.\venv\Scripts\Activate.ps1
+uvicorn main:app --reload --port 8000
+```
+
+Backend API:
+
+```powershell
 cd backend
 node server.js
 ```
 
-Start frontend:
+Frontend:
 
-```bash
+```powershell
 cd frontend
 npm start
 ```
 
-## Privacy Notice
+Then open `http://localhost:3000`. Service checks:
 
-Do not commit real secrets, real resumes, reset tokens, or real user emails. Keep `backend/.env` private. Use `backend/.env.example` for documentation.
+- Backend: `http://localhost:5000/`
+- AI worker: `http://127.0.0.1:8000/health`
 
-Before uploading to GitHub, review:
+For database provisioning, environment placeholders, admin setup, Linux/macOS commands, and troubleshooting, see the [Setup Guide](docs/SETUP_GUIDE.md).
 
-```text
-docs/PRIVACY_CHECKLIST.md
-```
+## Demo accounts
 
-## Demo Data Policy
+The following are examples only; they are not guaranteed to be seeded:
 
-Public demo data should use fake identities only:
+| Role | Email | Password |
+| --- | --- | --- |
+| Candidate | `candidate@example.com` | `password` |
+| Recruiter | `recruiter@example.com` | `password` |
+| Admin | `admin@example.com` | `password` |
 
-```text
-candidate.demo@hirepilot.ai
-recruiter.demo@hirepilot.ai
-Demo Candidate
-Demo Recruiter
-Demo Company
-```
+Use synthetic identities and resumes for screenshots or public demos. Follow the [Demo Guide](docs/DEMO_GUIDE.md) to prepare the roles in a safe order.
 
-## Current Roadmap
+## Safety and scope
 
-```text
-1. Stabilize current candidate/recruiter workflows
-2. Improve notification quality and read/unread states
-3. Upgrade recruiter applicant preview and ranking explanation
-4. Add validation, tests, migrations, and API documentation
-5. Move AI workflows into a separate Python/LangGraph agent layer
-6. Add external job portal automation with manual fallback
-7. Prepare deployment and production hardening
-```
+- Crawl4AI discovery uses a hardcoded raw local HTML document containing three demo jobs.
+- The Crawl4AI demo does not crawl LinkedIn, Indeed, company career pages, or any real website.
+- Playwright automation targets a safe dummy form and does not submit real external applications.
+- Simulated LinkedIn and Indeed records use reserved `.example` references and are not live integrations.
+- External source records do not become usable merely because they are created: admins must approve and enable sources.
+- Newly discovered demo jobs enter admin review before candidate visibility.
+- Manual fallback keeps the candidate in control when an application cannot be completed automatically.
+- Do not use real passwords, app passwords, resumes, reset tokens, or production data in demos.
+
+Real allowlisted external-portal support would require explicit source authorization, legal and security review, portal-specific controls, consent, observability, and additional testing. It is roadmap work, not a current capability.
+
+## Current status
+
+Implemented and demo-ready locally:
+
+- Candidate, Recruiter, and Admin tabbed workspaces
+- Internal recruitment and interview workflows
+- Recruiter and company governance foundations
+- External-source allowlist and discovered-job review
+- Safe Crawl4AI and Playwright demo foundations
+- Candidate application and agent-run tracking
+- Loading, empty-state, trust, and role-routing polish
+
+Not yet complete:
+
+- Production deployment and operations hardening
+- Real external-portal crawling or application submission
+- Production-grade email delivery, rate limiting, validation, monitoring, and automated test coverage
+- Full clean-database bootstrap schema in the numbered migration set
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Demo Guide](docs/DEMO_GUIDE.md)
+- [Setup Guide](docs/SETUP_GUIDE.md)
+- [Features](docs/FEATURES.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Privacy Checklist](docs/PRIVACY_CHECKLIST.md)
+
+## Roadmap
+
+Near-term work focuses on test coverage, configuration cleanup, production hardening, and richer orchestration. Longer-term plans include LangGraph-based workflows, advanced analytics, verified company documents, and carefully governed support for explicitly allowlisted external sources.
+
+See the complete [Roadmap](docs/ROADMAP.md).
