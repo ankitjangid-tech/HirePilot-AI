@@ -76,6 +76,7 @@ const reviewStatusLabel = (status) =>
 
 function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [dashboardLoading, setDashboardLoading] = useState(true);
   const [recruiters, setRecruiters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -160,10 +161,17 @@ function AdminDashboard() {
   const crawl4AiDemoAvailable = process.env.NODE_ENV !== "production";
 
   useEffect(() => {
-    fetchRecruiters();
-    fetchExternalJobs();
-    fetchExternalSources();
-    fetchCompanies();
+    const loadAdminWorkspace = async () => {
+      await Promise.all([
+        fetchRecruiters(),
+        fetchExternalJobs(),
+        fetchExternalSources(),
+        fetchCompanies(),
+      ]);
+      setDashboardLoading(false);
+    };
+
+    loadAdminWorkspace();
   }, []);
 
   const fetchRecruiters = async () => {
@@ -609,8 +617,7 @@ function AdminDashboard() {
       setDiscoveryError(
         requestError.response?.data?.message ||
           requestError.response?.data?.error ||
-          requestError.message ||
-          "Unable to run Crawl4AI demo discovery"
+          "The safe demo discovery could not be completed. Confirm the backend and AI worker are running."
       );
     } finally {
       setDiscoveryLoading(false);
@@ -655,11 +662,32 @@ function AdminDashboard() {
     });
   };
 
+  if (dashboardLoading) {
+    return (
+      <main className="dashboard-shell admin-dashboard">
+        <section className="dashboard-hero admin-hero">
+          <div>
+            <p className="eyebrow">Admin Control Panel</p>
+            <h1>Preparing platform controls</h1>
+            <p className="muted">Loading access, employer trust, and discovery governance data.</p>
+          </div>
+        </section>
+        <section className="panel workspace-loading-card" role="status" aria-live="polite">
+          <span className="workspace-loading-spinner" aria-hidden="true" />
+          <div>
+            <strong>Loading Admin Control Panel</strong>
+            <p>Your moderation and approval queues will be ready in a moment.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="dashboard-shell admin-dashboard">
       <section className="dashboard-hero admin-hero">
         <div>
-          <p className="eyebrow">Platform Administration</p>
+          <p className="eyebrow">Admin Control Panel</p>
           <h1>Admin Dashboard</h1>
           <p className="muted">
             Review recruiter access and control who can publish jobs on
@@ -814,9 +842,16 @@ function AdminDashboard() {
         </div>
 
         {loading ? (
-          <p className="empty-state">Loading recruiter accounts...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading recruiter accounts...</span>
+          </div>
         ) : recruiters.length === 0 ? (
-          <p className="empty-state">No recruiter accounts found.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No recruiter accounts</span>
+            <strong>There are no recruiters waiting for review.</strong>
+            <p>New recruiter registrations will appear here with approval controls.</p>
+          </div>
         ) : (
           <div className="admin-recruiter-list">
             {recruiters.map((recruiter) => (
@@ -914,11 +949,16 @@ function AdminDashboard() {
           )}
 
           {companiesLoading ? (
-            <p className="empty-state">Loading company profiles...</p>
+            <div className="inline-loading-state" role="status">
+              <span className="workspace-loading-spinner" aria-hidden="true" />
+              <span>Loading company profiles...</span>
+            </div>
           ) : companies.length === 0 ? (
-            <p className="empty-state">
-              No recruiter company profiles have been submitted.
-            </p>
+            <div className="empty-state-card">
+              <span className="empty-state-kicker">No company profiles</span>
+              <strong>No employer verification records need review.</strong>
+              <p>Recruiter-submitted company profiles will appear here with verification controls.</p>
+            </div>
           ) : (
             <div className="admin-company-list">
               {companies.map((company) => {
@@ -1221,9 +1261,16 @@ function AdminDashboard() {
         )}
 
         {externalSourcesLoading ? (
-          <p className="empty-state">Loading external sources...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading governed external sources...</span>
+          </div>
         ) : externalSources.length === 0 ? (
-          <p className="empty-state">No external discovery sources found.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No external sources</span>
+            <strong>Your discovery allowlist is empty.</strong>
+            <p>Create a source above, then explicitly approve and enable it before use.</p>
+          </div>
         ) : (
           <div className="admin-source-list">
             {externalSources.map((source) => {
@@ -1458,9 +1505,19 @@ function AdminDashboard() {
         </div>
 
         {externalJobsLoading ? (
-          <p className="empty-state">Loading external jobs...</p>
+          <div className="inline-loading-state" role="status">
+            <span className="workspace-loading-spinner" aria-hidden="true" />
+            <span>Loading external job review queue...</span>
+          </div>
         ) : externalJobs.length === 0 ? (
-          <p className="empty-state">No external jobs found.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">Review queue empty</span>
+            <strong>No discovered external jobs are waiting here.</strong>
+            <p>Run an approved discovery operation to create items for moderation.</p>
+            <button type="button" className="secondary-button" onClick={() => setActiveTab("discovery")}>
+              Open Discovery
+            </button>
+          </div>
         ) : (
           <div className="admin-external-job-list">
             {externalJobs.map((externalJob) => (

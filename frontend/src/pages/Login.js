@@ -3,6 +3,29 @@ import { Link, useNavigate } from "react-router-dom";
 import { login } from "../services/authService";
 import "../App.css";
 
+const roleDestinations = {
+  candidate: "/candidate",
+  recruiter: "/recruiter",
+  admin: "/admin",
+};
+
+const friendlyLoginError = (error) => {
+  const serverMessage = error.response?.data?.error;
+
+  if (
+    typeof serverMessage === "string" &&
+    serverMessage.length <= 180 &&
+    !serverMessage.includes("\n")
+  ) {
+    return serverMessage;
+  }
+
+  const status = error.response?.status;
+  return status
+    ? `Unable to sign in right now (HTTP ${status}). Please check your details and try again.`
+    : "Unable to reach HirePilot. Confirm the backend is running and try again.";
+};
+
 function Login() {
   const navigate = useNavigate();
 
@@ -38,21 +61,22 @@ function Login() {
         localStorage.removeItem("recruiter_status_reason");
       }
 
-      setMessage("Login successful");
+      const destination = roleDestinations[response.data.role];
 
-      if (response.data.role === "candidate") {
-        navigate("/");
-      } else if (response.data.role === "recruiter") {
-        navigate("/recruiter");
-      } else if (response.data.role === "admin") {
-        navigate("/admin");
-      } else {
-        setError("Unsupported account role");
+      if (!destination) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        setMessage("");
+        setError("This account role does not have an available workspace.");
+        return;
       }
+
+      setMessage("Login successful. Opening your workspace...");
+      navigate(destination, { replace: true });
     } catch (err) {
       console.log("LOGIN ERROR:", err.response?.data || err.message);
       setMessage("");
-      setError(err.response?.data?.error || "Login failed");
+      setError(friendlyLoginError(err));
     } finally {
       setLoading(false);
     }
@@ -64,7 +88,10 @@ function Login() {
         <div className="auth-brand">
           <span>HirePilot AI</span>
           <h1>Welcome back</h1>
-          <p>Login to continue to your recruitment workspace.</p>
+          <p>
+            Sign in to continue to your Candidate Workspace, Recruiter
+            Workspace, or Admin Control Panel.
+          </p>
         </div>
 
         <form className="auth-form" onSubmit={handleLogin}>
@@ -101,8 +128,8 @@ function Login() {
           </div>
         </form>
 
-        {message && <div className="auth-note">{message}</div>}
-        {error && <div className="auth-error">{error}</div>}
+        {message && <div className="auth-note" role="status">{message}</div>}
+        {error && <div className="auth-error" role="alert">{error}</div>}
       </div>
     </div>
   );

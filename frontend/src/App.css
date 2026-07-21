@@ -3310,3 +3310,168 @@ body,
     text-align: left;
   }
 }
+
+/* Shared dashboard loading, error, and empty-state polish */
+.workspace-loading-card,
+.inline-loading-state {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  color: #475569;
+}
+
+.workspace-loading-card {
+  min-height: 150px;
+  justify-content: center;
+  padding: 28px;
+  border-style: dashed;
+  background: linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+  text-align: left;
+}
+
+.workspace-loading-card strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text);
+  font-size: 18px;
+}
+
+.workspace-loading-card p,
+.inline-loading-state p {
+  margin: 0;
+}
+
+.inline-loading-state {
+  justify-content: center;
+  min-height: 112px;
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  font-weight: 700;
+}
+
+.workspace-loading-spinner {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 3px solid #bfdbfe;
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: workspace-spin 0.8s linear infinite;
+}
+
+@keyframes workspace-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workspace-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: #fecaca;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.workspace-error-banner > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspace-error-banner span {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.empty-state-card {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 28px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+  text-align: center;
+}
+
+.empty-state-card.compact-empty-state {
+  padding: 22px;
+}
+
+.empty-state-card.success-empty-state {
+  border-color: #bbf7d0;
+  background: linear-gradient(145deg, #ffffff 0%, #f0fdf4 100%);
+}
+
+.empty-state-kicker {
+  color: var(--primary-dark);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.success-empty-state .empty-state-kicker {
+  color: var(--success);
+}
+
+.empty-state-card strong {
+  max-width: 620px;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.empty-state-card p {
+  max-width: 660px;
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.empty-state-card button {
+  margin-top: 6px;
+}
+
+.recruiter-tab-empty-action.empty-state-card {
+  justify-items: center;
+}
+
+@media (max-width: 640px) {
+  .workspace-loading-card,
+  .workspace-error-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workspace-loading-card {
+    align-items: center;
+    text-align: center;
+  }
+
+  .workspace-error-banner .secondary-button,
+  .empty-state-card .primary-button,
+  .empty-state-card .secondary-button {
+    width: 100%;
+  }
+
+  .empty-state-card {
+    padding: 22px 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-loading-spinner {
+    animation-duration: 1.8s;
+  }
+}

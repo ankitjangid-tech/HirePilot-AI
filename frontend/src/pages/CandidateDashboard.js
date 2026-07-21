@@ -375,6 +375,8 @@ const getInternalJobTrustData = async (token) => {
 
 function CandidateDashboard() {
   const [activeTab, setActiveTab] = useState("overview");
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
   const [profile, setProfile] = useState(null);
   const [profileCompleted, setProfileCompleted] = useState(false);
   const [missingFields, setMissingFields] = useState([]);
@@ -419,9 +421,11 @@ function CandidateDashboard() {
       const token = localStorage.getItem("token");
 
       if (!token) {
-        setMessage("Please login again");
+        setDashboardError("Your session is unavailable. Please sign in again.");
         return;
       }
+
+      setDashboardError("");
 
       const profileResponse = await getProfile(token);
       const profileData = profileResponse.data;
@@ -519,7 +523,14 @@ function CandidateDashboard() {
       );
     } catch (error) {
       console.log("DASHBOARD FETCH ERROR:", error.response?.data || error.message);
-      setMessage("Unable to refresh dashboard");
+      const status = error.response?.status;
+      setDashboardError(
+        status
+          ? `We couldn't load your candidate workspace (HTTP ${status}). Please try again.`
+          : "We couldn't reach HirePilot. Confirm the backend is running, then try again."
+      );
+    } finally {
+      setDashboardLoading(false);
     }
   };
 
@@ -1156,11 +1167,34 @@ function CandidateDashboard() {
     });
   };
 
+  if (dashboardLoading) {
+    return (
+      <main className="dashboard-shell">
+        <section className="dashboard-hero">
+          <div>
+            <p className="eyebrow">Candidate Workspace</p>
+            <h1>Preparing your dashboard</h1>
+            <p className="muted">
+              Loading your profile, opportunities, applications, and updates.
+            </p>
+          </div>
+        </section>
+        <section className="panel workspace-loading-card" role="status" aria-live="polite">
+          <span className="workspace-loading-spinner" aria-hidden="true" />
+          <div>
+            <strong>Loading Candidate Workspace</strong>
+            <p>Your latest HirePilot data will be ready in a moment.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="dashboard-shell">
       <section className="dashboard-hero">
         <div>
-          <p className="eyebrow">Candidate Portal</p>
+          <p className="eyebrow">Candidate Workspace</p>
           <h1>Candidate Dashboard</h1>
           <p className="muted">
             Manage your profile, matched jobs, applications, and interview updates.
@@ -1172,7 +1206,18 @@ function CandidateDashboard() {
         </button>
       </section>
 
-      {message && <div className="notice-banner">{message}</div>}
+      {message && <div className="notice-banner" role="status">{message}</div>}
+      {dashboardError && (
+        <div className="notice-banner workspace-error-banner" role="alert">
+          <div>
+            <strong>Candidate data is temporarily unavailable.</strong>
+            <span>{dashboardError}</span>
+          </div>
+          <button type="button" className="secondary-button small-button" onClick={fetchDashboardData}>
+            Try Again
+          </button>
+        </div>
+      )}
 
       <nav className="candidate-tab-shell" aria-label="Candidate workspace">
         <div className="candidate-tab-list" role="tablist">
@@ -1622,6 +1667,24 @@ function CandidateDashboard() {
         </section>
       )}
 
+      {activeTab === "profile" && !profile && (
+        <section
+          className="panel"
+          id="candidate-tabpanel-profile"
+          role="tabpanel"
+          aria-labelledby="candidate-tab-profile"
+        >
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">Profile unavailable</span>
+            <strong>We could not load your profile details.</strong>
+            <p>Retry the dashboard request before updating your candidate information.</p>
+            <button type="button" className="secondary-button" onClick={fetchDashboardData}>
+              Retry Profile
+            </button>
+          </div>
+        </section>
+      )}
+
       {activeTab === "matched-jobs" && (
       <section
         className="panel"
@@ -1638,7 +1701,14 @@ function CandidateDashboard() {
         </div>
 
         {jobs.length === 0 ? (
-          <p className="empty-state">No matched jobs found yet.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No matches yet</span>
+            <strong>Your next internal match will appear here.</strong>
+            <p>Keep your skills, experience, and preferred role current to improve matching.</p>
+            <button type="button" className="secondary-button" onClick={() => setActiveTab("profile")}>
+              Review Profile
+            </button>
+          </div>
         ) : (
           <div className="card-grid">
             {jobs.map((job) => {
@@ -1687,7 +1757,11 @@ function CandidateDashboard() {
       {externalMessage && <div className="notice-banner compact">{externalMessage}</div>}
 
       {externalJobs.length === 0 ? (
-        <p className="empty-state">No external matched jobs found yet.</p>
+        <div className="empty-state-card">
+          <span className="empty-state-kicker">No approved external jobs</span>
+          <strong>There are no reviewed external matches available right now.</strong>
+          <p>New opportunities appear here after HirePilot completes its source review.</p>
+        </div>
       ) : (
         <div className="card-grid external-card-grid">
           {externalJobs.map((job) => (
@@ -2002,7 +2076,14 @@ function CandidateDashboard() {
           </div>
 
           {applications.length === 0 ? (
-            <p className="empty-state">No submitted internal applications yet.</p>
+            <div className="empty-state-card compact-empty-state">
+              <span className="empty-state-kicker">No internal applications</span>
+              <strong>Applied HirePilot jobs will appear here.</strong>
+              <p>Browse your matched jobs when you are ready to apply.</p>
+              <button type="button" className="secondary-button small-button" onClick={() => setActiveTab("matched-jobs")}>
+                View Matched Jobs
+              </button>
+            </div>
           ) : (
             <div className="application-control-list">
               {applications.map((application) => (
@@ -2040,9 +2121,11 @@ function CandidateDashboard() {
           </div>
 
           {visiblePendingManualActions.length === 0 ? (
-            <p className="empty-state">
-              No pending manual actions for this view. You are all caught up.
-            </p>
+            <div className="empty-state-card compact-empty-state success-empty-state">
+              <span className="empty-state-kicker">All caught up</span>
+              <strong>No manual actions need your attention.</strong>
+              <p>Applications requiring confirmation or fallback steps will appear here.</p>
+            </div>
           ) : (
             <div className="application-control-list">
               {visiblePendingManualActions.map((application) => {
@@ -2138,11 +2221,15 @@ function CandidateDashboard() {
         </div>
 
         {visibleExternalApplications.length === 0 ? (
-          <p className="empty-state">
-            {applicationFilter === "all" && pendingManualExternalCount > 0
-              ? "Pending external applications are listed under Pending Manual Actions."
-              : "No external applications match this filter."}
-          </p>
+          <div className="empty-state-card compact-empty-state">
+            <span className="empty-state-kicker">No external applications</span>
+            <strong>
+              {applicationFilter === "all" && pendingManualExternalCount > 0
+                ? "Pending items are grouped under Manual Actions."
+                : "No external applications match this view."}
+            </strong>
+            <p>External applications and their completion states will be tracked here.</p>
+          </div>
         ) : (
           <div className="application-control-list">
             {visibleExternalApplications.map((application) => (
@@ -2346,11 +2433,17 @@ function CandidateDashboard() {
         )}
 
         {externalAgentRuns.length === 0 ? (
-          <p className="empty-state">No AI agent runs yet.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No agent runs yet</span>
+            <strong>External apply automation history will appear here.</strong>
+            <p>Start an approved external application or use a development-safe test to create a run.</p>
+          </div>
         ) : visibleAgentRuns.length === 0 ? (
-          <p className="empty-state agent-run-filter-empty">
-            No {agentRunFilter} agent runs.
-          </p>
+          <div className="empty-state-card compact-empty-state agent-run-filter-empty">
+            <span className="empty-state-kicker">No filter results</span>
+            <strong>No {agentRunFilter} agent runs are available.</strong>
+            <p>Choose another status filter to review your run history.</p>
+          </div>
         ) : (
           <div className="agent-run-list">
             {visibleAgentRuns.map((run) => {
@@ -2421,7 +2514,7 @@ function CandidateDashboard() {
                   </div>
                 )}
                 {run.run_status !== "failed" && technicalError && (
-                  <p className="helper-text error-text">{technicalError}</p>
+                  <p className="helper-text error-text">{getFriendlyRunError(run)}</p>
                 )}
 
                 <div className="agent-step-timeline">
@@ -2489,7 +2582,11 @@ function CandidateDashboard() {
         </div>
 
         {externalAgentLogs.length === 0 ? (
-          <p className="empty-state">No external agent activity yet.</p>
+          <div className="empty-state-card compact-empty-state">
+            <span className="empty-state-kicker">No live activity</span>
+            <strong>Agent progress steps will appear during a run.</strong>
+            <p>Refresh the timeline after starting an external apply workflow.</p>
+          </div>
         ) : (
           <div className="agent-log-list">
             {externalAgentLogs.map((log) => (
@@ -2540,7 +2637,11 @@ function CandidateDashboard() {
         </div>
 
         {upcomingInterviews.length === 0 ? (
-          <p className="empty-state">No upcoming interviews.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">No interviews scheduled</span>
+            <strong>Your upcoming recruiter conversations will appear here.</strong>
+            <p>HirePilot will also notify you when an interview is scheduled or updated.</p>
+          </div>
         ) : (
           <div className="upcoming-interview-grid">
             {upcomingInterviews.map((interview, index) => (
@@ -2609,7 +2710,11 @@ function CandidateDashboard() {
         )}
 
         {notifications.length === 0 ? (
-          <p className="empty-state">No notifications yet.</p>
+          <div className="empty-state-card">
+            <span className="empty-state-kicker">Inbox clear</span>
+            <strong>You do not have any notifications yet.</strong>
+            <p>Application, interview, and recruiter updates will be collected here.</p>
+          </div>
         ) : (
           <div className="stack-list">
             {notifications.map((notification, index) => (
