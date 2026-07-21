@@ -28,6 +28,7 @@ These are placeholder credentials. Create them locally; do not reuse real passwo
 
 ## Before the demo
 
+- Complete the public-repo checks in [PRIVACY_CHECKLIST.md](PRIVACY_CHECKLIST.md).
 - Use a synthetic Candidate profile and PDF resume.
 - Apply database migrations `001–011` in order.
 - Keep `NODE_ENV=development` for safe demo controls.

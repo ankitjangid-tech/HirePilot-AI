@@ -84,6 +84,8 @@ Create a local backend environment file:
 Copy-Item backend/.env.example backend/.env
 ```
 
+`backend/.env.example` is the public template and must contain placeholders only. Put every real database, JWT, email, and worker value in the ignored `backend/.env` or in a deployment secret manager. Never replace placeholders inside the tracked example with working credentials.
+
 Use placeholders while documenting or sharing configuration:
 
 ```dotenv
@@ -374,3 +376,4 @@ Before sharing the repository or recording a demo:
 - do not show JWTs, reset tokens, database passwords, or SMTP credentials;
 - do not claim that the demo crawls or applies through real external portals;
 - review [PRIVACY_CHECKLIST.md](PRIVACY_CHECKLIST.md).
+- review [DEPLOYMENT_READINESS.md](DEPLOYMENT_READINESS.md) before making any production-readiness claim.

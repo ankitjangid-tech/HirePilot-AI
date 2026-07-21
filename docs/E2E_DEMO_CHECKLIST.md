@@ -4,6 +4,7 @@ Use this fast checklist immediately before a presentation. For narration and det
 
 ## Safety boundary
 
+- [ ] Complete [PRIVACY_CHECKLIST.md](PRIVACY_CHECKLIST.md) before recording or publishing the demo.
 - [ ] Use synthetic accounts, company data, jobs, and resumes only.
 - [ ] Confirm Crawl4AI remains in `safe_raw_html_discovery` mode.
 - [ ] Confirm Playwright is used only with the HirePilot safe dummy portal.

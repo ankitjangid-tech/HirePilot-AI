@@ -189,6 +189,18 @@ Use synthetic identities and resumes for screenshots or public demos. Follow the
 
 Real allowlisted external-portal support would require explicit source authorization, legal and security review, portal-specific controls, consent, observability, and additional testing. It is roadmap work, not a current capability.
 
+## Public repo safety
+
+This repository is configured to ignore local environment files, dependencies, virtual environments, builds, uploaded resumes, logs, database dumps, and zip archives while keeping `database/migrations/*.sql` trackable. Ignore rules do not remove anything already committed, so review both the current tree and Git history before making a repository public.
+
+- Copy configuration from `backend/.env.example` and keep the real `backend/.env` private.
+- Use synthetic accounts, resumes, jobs, and screenshots only.
+- Revoke and regenerate any credential that may have been exposed; deleting it from the latest commit is not enough.
+- Do not describe the local Crawl4AI or Playwright demonstrations as real external-portal integrations.
+- Do not describe the project as production-deployed or production-ready.
+
+Review the [Privacy Checklist](docs/PRIVACY_CHECKLIST.md) and [Deployment Readiness](docs/DEPLOYMENT_READINESS.md) guide before publishing or deploying.
+
 ## Current status
 
 Implemented and demo-ready locally:
@@ -216,6 +228,7 @@ Not yet complete:
 - [Setup Guide](docs/SETUP_GUIDE.md)
 - [Features](docs/FEATURES.md)
 - [Roadmap](docs/ROADMAP.md)
+- [Deployment Readiness](docs/DEPLOYMENT_READINESS.md)
 - [Privacy Checklist](docs/PRIVACY_CHECKLIST.md)
 
 ## Roadmap
