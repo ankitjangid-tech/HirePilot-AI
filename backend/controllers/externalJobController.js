@@ -1,36 +1,144 @@
 const axios = require("axios");
 const pool = require("../config/db");
-const { compareSkills } = require("../services/matchingService");
+const { compareSkills, normalizeSkills } = require("../services/matchingService");
+
+const MATCH_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "for",
+  "full",
+  "in",
+  "of",
+  "or",
+  "part",
+  "remote",
+  "the",
+  "time",
+  "to",
+  "with",
+]);
+
+const matchTokens = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .match(/[a-z0-9+#.]+/g)
+    ?.filter((token) => token.length > 1 && !MATCH_STOP_WORDS.has(token)) || [];
+
+const textContainsSkill = (searchableText, searchableTokens, skill) => {
+  const skillLabel = String(skill?.label || "").trim().toLowerCase();
+  if (!skillLabel) {
+    return false;
+  }
+
+  const skillTokens = matchTokens(skillLabel);
+  if (skillTokens.length === 1 && skillTokens[0].length <= 3) {
+    return searchableTokens.has(skillTokens[0]);
+  }
+
+  const compactSkill = skillLabel.replace(/[^a-z0-9+#]/g, "");
+  const compactText = searchableText.replace(/[^a-z0-9+#]/g, "");
+  return compactSkill.length >= 2 && compactText.includes(compactSkill);
+};
 
 const calculateExternalMatch = (candidate, job) => {
-  const comparison = compareSkills(candidate.skills, job.required_skills);
-  const matchedSkills = comparison.matchedSkills.map((skill) => skill.label);
+  const usableRequiredSkills = normalizeSkills(job.required_skills).filter(
+    (skill) =>
+      !["n/a", "na", "none", "not available", "not specified", "unknown"].includes(
+        skill.key
+      )
+  );
+  const comparison = compareSkills(
+    candidate.skills,
+    usableRequiredSkills.map((skill) => skill.label)
+  );
+  const jobSearchText = `${job.job_title || ""} ${job.job_description || ""}`
+    .trim()
+    .toLowerCase();
+  const jobSearchTokens = new Set(matchTokens(jobSearchText));
+  const fallbackSkillMatches = comparison.candidateSkills.filter((skill) =>
+    textContainsSkill(jobSearchText, jobSearchTokens, skill)
+  );
+  const matchedSkills = Array.from(
+    new Map(
+      [...comparison.matchedSkills, ...fallbackSkillMatches].map((skill) => [
+        skill.key,
+        skill.label,
+      ])
+    ).values()
+  );
   const missingSkills = comparison.missingSkills.map((skill) => skill.label);
+  const directSkillScore = comparison.requiredCount
+    ? Math.round((comparison.matchedCount / comparison.requiredCount) * 60)
+    : 0;
+  const fallbackOnlyCount = fallbackSkillMatches.filter(
+    (fallbackSkill) =>
+      !comparison.matchedSkills.some(
+        (matchedSkill) => matchedSkill.key === fallbackSkill.key
+      )
+  ).length;
+  const fallbackSkillScore = Math.min(fallbackOnlyCount * 10, 30);
 
-  let score = matchedSkills.length * 20;
+  const roleTokens = Array.from(new Set(matchTokens(candidate.preferred_role)));
+  const matchedRoleTokens = roleTokens.filter((token) =>
+    jobSearchTokens.has(token)
+  );
+  const normalizedRole = roleTokens.join(" ");
+  const normalizedJobText = matchTokens(jobSearchText).join(" ");
+  const roleScore =
+    normalizedRole && normalizedJobText.includes(normalizedRole)
+      ? 30
+      : roleTokens.length
+      ? Math.round((matchedRoleTokens.length / roleTokens.length) * 30)
+      : 0;
 
-  if (
-    candidate.preferred_role &&
-    job.job_title &&
-    job.job_title
-      .toLowerCase()
-      .includes(candidate.preferred_role.toLowerCase().split(" ")[0])
-  ) {
-    score += 10;
-  }
+  let score = directSkillScore + fallbackSkillScore + roleScore;
 
   if (
     candidate.preferred_location &&
     job.location &&
     job.location.toLowerCase().includes(candidate.preferred_location.toLowerCase())
   ) {
-    score += 10;
+    score += 5;
   }
 
+  if (
+    Number(job.experience_required) > 0 &&
+    Number(candidate.experience_years) >= Number(job.experience_required)
+  ) {
+    score += 5;
+  }
+
+  const matchScore = Math.min(Math.max(Math.round(score), 0), 100);
+  const hasMatchSignals = Boolean(
+    comparison.requiredCount ||
+      roleTokens.length ||
+      fallbackSkillMatches.length ||
+      job.job_description
+  );
+  const matchLabel =
+    matchScore >= 70
+      ? "Strong match"
+      : matchScore >= 40
+      ? "Good match"
+      : matchScore > 0 || hasMatchSignals
+      ? "Low match"
+      : "Match unavailable";
+
   return {
-    match_score: Math.min(score, 100),
+    match_score: matchScore,
+    match_label: matchLabel,
+    match_level:
+      matchLabel === "Strong match"
+        ? "strong"
+        : matchLabel === "Good match"
+        ? "good"
+        : matchLabel === "Low match"
+        ? "low"
+        : "unavailable",
     matched_skills: matchedSkills,
     missing_skills: missingSkills,
+    matched_role_terms: matchedRoleTokens,
   };
 };
 
@@ -622,12 +730,6 @@ const getMatchedExternalJobs = async (req, res) => {
       });
     }
 
-    if (isProfileIncomplete(candidate)) {
-      return res.status(400).json({
-        error: "Please complete your profile before external job discovery",
-      });
-    }
-
     const jobsResult = await pool.query(
       `SELECT
         ej.external_job_id,
@@ -641,6 +743,8 @@ const getMatchedExternalJobs = async (req, res) => {
         ej.salary,
         ej.apply_mode,
         ej.review_status,
+        ej.discovery_source,
+        NULLIF(to_jsonb(ej)->>'job_description', '') AS job_description,
         ea.external_application_id,
         ea.application_status,
         ea.failure_reason,
@@ -665,8 +769,11 @@ const getMatchedExternalJobs = async (req, res) => {
           already_applied: Boolean(job.external_application_id),
         };
       })
-      .filter((job) => job.match_score >= 40)
-      .sort((a, b) => b.match_score - a.match_score);
+      .sort(
+        (a, b) =>
+          b.match_score - a.match_score ||
+          b.external_job_id - a.external_job_id
+      );
 
     return res.status(200).json({
       matchedExternalJobs,
@@ -2181,6 +2288,466 @@ const runCrawl4AiDemoDiscovery = async (req, res) => {
   }
 };
 
+const safeDiscoveryUrl = (value) => {
+  try {
+    const parsed = new URL(String(value || "").trim());
+    const hostname = parsed.hostname.toLowerCase();
+
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      parsed.username ||
+      parsed.password ||
+      !hostname ||
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local")
+    ) {
+      return null;
+    }
+
+    return parsed.toString();
+  } catch (error) {
+    return null;
+  }
+};
+
+const discoveryJobUrl = (jobUrl, sourceUrl, jobTitle, index) => {
+  const discoveredUrl = safeDiscoveryUrl(jobUrl);
+  if (discoveredUrl) {
+    return discoveredUrl;
+  }
+
+  const fallback = new URL(sourceUrl);
+  const slug = String(jobTitle || "job")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  fallback.hash = `hirepilot-discovered-${slug || "job"}-${index + 1}`;
+  return fallback.toString();
+};
+
+const cleanDiscoveryValue = (value, maxLength) =>
+  String(value === null || value === undefined ? "" : value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+
+const updateDiscoveryRun = async ({
+  discoveryRunId,
+  sourceId,
+  runStatus,
+  message,
+  discoveredCount = 0,
+  insertedCount = 0,
+  updatedCount = 0,
+  summary = null,
+}) => {
+  await pool.query(
+    `WITH run_values AS (
+       SELECT
+         $1::integer AS discovery_run_id,
+         $2::varchar(30) AS run_status,
+         $3::integer AS discovered_count,
+         $4::integer AS inserted_count,
+         $5::integer AS updated_count,
+         $6::text AS error_message,
+         $7::jsonb AS raw_summary
+     )
+     UPDATE external_discovery_runs AS discovery_run
+     SET run_status = run_values.run_status,
+         discovered_count = run_values.discovered_count,
+         inserted_count = run_values.inserted_count,
+         updated_count = run_values.updated_count,
+         error_message = run_values.error_message,
+         raw_summary = run_values.raw_summary,
+         started_at = CASE
+           WHEN run_values.run_status = 'running'
+             THEN COALESCE(discovery_run.started_at, CURRENT_TIMESTAMP)
+           ELSE discovery_run.started_at
+         END,
+         completed_at = CASE
+           WHEN run_values.run_status IN ('completed', 'failed', 'blocked')
+             THEN CURRENT_TIMESTAMP
+           ELSE discovery_run.completed_at
+         END
+     FROM run_values
+     WHERE discovery_run.discovery_run_id = run_values.discovery_run_id`,
+    [
+      discoveryRunId,
+      runStatus,
+      discoveredCount,
+      insertedCount,
+      updatedCount,
+      ["failed", "blocked"].includes(runStatus) ? message : null,
+      summary ? JSON.stringify(summary) : null,
+    ]
+  );
+
+  await pool.query(
+    `UPDATE external_sources
+     SET last_discovery_run_at = CURRENT_TIMESTAMP,
+         last_discovery_status = $2::varchar(30),
+         last_discovery_message = $3::text,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE external_source_id = $1::integer`,
+    [sourceId, runStatus, cleanDiscoveryValue(message, 2000) || null]
+  );
+};
+
+const runAllowlistedSourceDiscovery = async (req, res) => {
+  const sourceId = Number(req.params.sourceId);
+  let discoveryRunId = null;
+  let source = null;
+
+  if (!sourceId) {
+    return res.status(400).json({
+      success: false,
+      error: "Valid external source id is required",
+    });
+  }
+
+  try {
+    const sourceResult = await pool.query(
+      `SELECT
+        external_source_id,
+        source_name,
+        source_key,
+        source_type,
+        base_url,
+        is_enabled,
+        trust_status,
+        safety_mode,
+        real_crawl_allowed
+       FROM external_sources
+       WHERE external_source_id = $1
+       LIMIT 1`,
+      [sourceId]
+    );
+    source = sourceResult.rows[0];
+
+    if (!source) {
+      return res.status(404).json({
+        success: false,
+        error: "External discovery source not found",
+      });
+    }
+
+    const isDemoSource = source.source_key === "crawl4ai_demo";
+    const sourceUrl = isDemoSource
+      ? String(source.base_url || "")
+      : safeDiscoveryUrl(source.base_url);
+
+    if (!sourceUrl) {
+      return res.status(400).json({
+        success: false,
+        error: "A valid public HTTP or HTTPS base URL is required for discovery.",
+      });
+    }
+
+    const runResult = await pool.query(
+      `INSERT INTO external_discovery_runs (
+        external_source_id,
+        requested_by,
+        source_url,
+        run_status
+       )
+       VALUES (
+         $1::integer,
+         $2::integer,
+         $3::text,
+         $4::varchar(30)
+       )
+       RETURNING discovery_run_id`,
+      [source.external_source_id, req.user.user_id, sourceUrl, "queued"]
+    );
+    discoveryRunId = runResult.rows[0].discovery_run_id;
+
+    const blocked =
+      source.is_enabled !== true ||
+      source.trust_status !== "approved" ||
+      (!isDemoSource && source.real_crawl_allowed !== true);
+
+    if (blocked) {
+      const message =
+        "Discovery is blocked. The source must be approved, enabled, and explicitly allowed for real read-only crawling.";
+      await updateDiscoveryRun({
+        discoveryRunId,
+        sourceId,
+        runStatus: "blocked",
+        message,
+      });
+      return res.status(403).json({
+        success: false,
+        message,
+        discovery_run_id: discoveryRunId,
+      });
+    }
+
+    if (isDemoSource) {
+      const message =
+        "Use the existing Crawl4AI Demo Discovery operation for the safe raw HTML source.";
+      await updateDiscoveryRun({
+        discoveryRunId,
+        sourceId,
+        runStatus: "blocked",
+        message,
+      });
+      return res.status(400).json({
+        success: false,
+        message,
+        discovery_run_id: discoveryRunId,
+      });
+    }
+
+    if (!isWorkerEnabled()) {
+      const message = "AI worker is disabled. Enable it before running discovery.";
+      await updateDiscoveryRun({
+        discoveryRunId,
+        sourceId,
+        runStatus: "failed",
+        message,
+      });
+      return res.status(503).json({
+        success: false,
+        message,
+        discovery_run_id: discoveryRunId,
+      });
+    }
+
+    await updateDiscoveryRun({
+      discoveryRunId,
+      sourceId,
+      runStatus: "running",
+      message: "Read-only discovery is running.",
+    });
+
+    const workerResponse = await axios.post(
+      `${workerBaseUrl()}/discovery/allowlisted-crawl`,
+      {
+        source_url: sourceUrl,
+        source_name: source.source_name,
+        source_key: source.source_key,
+      },
+      {
+        timeout: Math.max(
+          Number(process.env.AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS || 90000),
+          30000
+        ),
+      }
+    );
+
+    if (workerResponse.data?.success !== true) {
+      throw new Error(
+        workerResponse.data?.message || "AI worker returned an unsuccessful discovery result."
+      );
+    }
+
+    const workerJobs = Array.isArray(workerResponse.data.jobs)
+      ? workerResponse.data.jobs
+      : [];
+    const safeJobs = workerJobs
+      .slice(0, 100)
+      .map((job, index) => {
+        const jobTitle = cleanDiscoveryValue(job?.job_title, 150);
+        if (!jobTitle) {
+          return null;
+        }
+
+        return {
+          job_title: jobTitle,
+          company_name:
+            cleanDiscoveryValue(job?.company_name, 150) || source.source_name,
+          location: cleanDiscoveryValue(job?.location, 100) || null,
+          required_skills:
+            cleanDiscoveryValue(job?.required_skills, 4000) || null,
+          experience_required: Math.max(
+            Number.parseInt(job?.experience_required, 10) || 0,
+            0
+          ),
+          job_description:
+            cleanDiscoveryValue(job?.job_description, 6000) || null,
+          job_url: discoveryJobUrl(
+            job?.job_url,
+            sourceUrl,
+            jobTitle,
+            index
+          ),
+        };
+      })
+      .filter(Boolean);
+
+    const client = await pool.connect();
+    let insertedCount = 0;
+    let updatedCount = 0;
+    const jobs = [];
+
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        [`hirepilot_allowlisted_discovery_${source.external_source_id}`]
+      );
+
+      for (const job of safeJobs) {
+        const existingResult = await client.query(
+          `SELECT external_job_id
+           FROM external_jobs
+           WHERE job_url = $1
+              OR (
+                source_platform = $2
+                AND LOWER(job_title) = LOWER($3)
+                AND LOWER(company_name) = LOWER($4)
+              )
+           ORDER BY
+             CASE WHEN job_url = $1 THEN 0 ELSE 1 END,
+             external_job_id
+           LIMIT 1`,
+          [job.job_url, source.source_name, job.job_title, job.company_name]
+        );
+
+        let savedJob;
+        if (existingResult.rows.length) {
+          const updated = await client.query(
+            `UPDATE external_jobs
+             SET job_title = $2,
+                 company_name = $3,
+                 source_platform = $4,
+                 job_url = $5,
+                 required_skills = $6,
+                 experience_required = $7,
+                 location = $8,
+                 apply_mode = 'manual_questions',
+                 discovery_source = 'allowlisted_crawl4ai',
+                 is_active = TRUE,
+                 discovered_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE external_job_id = $1
+             RETURNING *`,
+            [
+              existingResult.rows[0].external_job_id,
+              job.job_title,
+              job.company_name,
+              source.source_name,
+              job.job_url,
+              job.required_skills,
+              job.experience_required,
+              job.location,
+            ]
+          );
+          savedJob = updated.rows[0];
+          updatedCount += 1;
+        } else {
+          const inserted = await client.query(
+            `INSERT INTO external_jobs (
+              job_title,
+              company_name,
+              source_platform,
+              job_url,
+              required_skills,
+              experience_required,
+              location,
+              apply_mode,
+              is_active,
+              review_status,
+              discovery_source,
+              discovered_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual_questions', TRUE,
+               'pending_review', 'allowlisted_crawl4ai', CURRENT_TIMESTAMP)
+             RETURNING *`,
+            [
+              job.job_title,
+              job.company_name,
+              source.source_name,
+              job.job_url,
+              job.required_skills,
+              job.experience_required,
+              job.location,
+            ]
+          );
+          savedJob = inserted.rows[0];
+          insertedCount += 1;
+        }
+
+        jobs.push({ ...savedJob, job_description: job.job_description });
+      }
+
+      await client.query("COMMIT");
+    } catch (databaseError) {
+      await client.query("ROLLBACK");
+      throw databaseError;
+    } finally {
+      client.release();
+    }
+
+    const message = `Read-only discovery completed. Discovered: ${safeJobs.length}; inserted: ${insertedCount}; updated: ${updatedCount}. No applications were submitted.`;
+    await updateDiscoveryRun({
+      discoveryRunId,
+      sourceId,
+      runStatus: "completed",
+      message,
+      discoveredCount: safeJobs.length,
+      insertedCount,
+      updatedCount,
+      summary: {
+        mode: "read_only_allowlisted_discovery",
+        source_key: source.source_key,
+        worker_message: cleanDiscoveryValue(workerResponse.data.message, 1000),
+        jobs: safeJobs.map((job) => ({
+          job_title: job.job_title,
+          company_name: job.company_name,
+          job_url: job.job_url,
+        })),
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message,
+      discovery_run_id: discoveryRunId,
+      discovered_count: safeJobs.length,
+      inserted_count: insertedCount,
+      updated_count: updatedCount,
+      jobs,
+    });
+  } catch (error) {
+    const workerMessage =
+      error.response?.data?.detail ||
+      error.response?.data?.message ||
+      error.response?.data?.error ||
+      error.message ||
+      "Read-only discovery failed";
+    const message = cleanDiscoveryValue(workerMessage, 2000);
+
+    if (discoveryRunId && source) {
+      try {
+        await updateDiscoveryRun({
+          discoveryRunId,
+          sourceId: source.external_source_id,
+          runStatus: "failed",
+          message,
+        });
+      } catch (statusError) {
+        console.log("DISCOVERY RUN STATUS UPDATE ERROR:", statusError.message);
+      }
+    }
+
+    console.log("ALLOWLISTED DISCOVERY ERROR:", message);
+    const workerUnavailable =
+      error.code === "ECONNREFUSED" ||
+      error.code === "ETIMEDOUT" ||
+      error.response?.status === 503;
+    return res.status(workerUnavailable ? 503 : 500).json({
+      success: false,
+      message: workerUnavailable
+        ? `AI worker is unavailable: ${message}`
+        : message || "Unable to run read-only discovery",
+      discovery_run_id: discoveryRunId,
+    });
+  }
+};
+
 module.exports = {
   getMatchedExternalJobs,
   getMyExternalApplications,
@@ -2194,4 +2761,5 @@ module.exports = {
   runSafeBrowserSmokeTest,
   resetSafeDummyExternalApplication,
   runCrawl4AiDemoDiscovery,
+  runAllowlistedSourceDiscovery,
 };

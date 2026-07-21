@@ -1,11 +1,16 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from html import unescape
+from html.parser import HTMLParser
+from urllib.parse import urljoin, urlparse
+import ipaddress
 import json
 import os
 import subprocess
 import sys
 import re
+import socket
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -258,6 +263,637 @@ def run_crawl4ai_demo_discovery_isolated() -> List[Dict[str, Any]]:
             "Isolated Crawl4AI demo process returned an unsafe job record."
         )
 
+    return jobs
+
+
+def validate_public_discovery_url(source_url: str) -> str:
+    """Allow read-only discovery only for public HTTP(S) targets."""
+    candidate = str(source_url or "").strip()
+    parsed = urlparse(candidate)
+
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("source_url must be a public http:// or https:// URL.")
+    if parsed.username or parsed.password:
+        raise ValueError("source_url must not contain login credentials.")
+    if parsed.port not in {None, 80, 443}:
+        raise ValueError("source_url must use the standard HTTP or HTTPS port.")
+
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
+        raise ValueError("Local or private discovery targets are not allowed.")
+
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror as error:
+        raise ValueError("The discovery source hostname could not be resolved.") from error
+
+    if not addresses:
+        raise ValueError("The discovery source hostname did not resolve to a public address.")
+
+    for address in addresses:
+        ip = ipaddress.ip_address(address)
+        if not ip.is_global:
+            raise ValueError("Local, private, reserved, or link-local targets are not allowed.")
+
+    return candidate
+
+
+def clean_discovery_text(value: Any, limit: int = 4000) -> str:
+    text = re.sub(r"<[^>]+>", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", unescape(text)).strip()
+    return text[:limit]
+
+
+def first_text(value: Any) -> str:
+    if isinstance(value, list):
+        for item in value:
+            candidate = first_text(item)
+            if candidate:
+                return candidate
+        return ""
+    if isinstance(value, dict):
+        return first_text(value.get("name") or value.get("value"))
+    return clean_discovery_text(value, 1000)
+
+
+def extract_location(job: Dict[str, Any]) -> str:
+    location = job.get("jobLocation")
+    if isinstance(location, list):
+        location = location[0] if location else None
+    if isinstance(location, dict):
+        address = location.get("address", location)
+        if isinstance(address, dict):
+            parts = [
+                address.get("addressLocality"),
+                address.get("addressRegion"),
+                address.get("addressCountry"),
+            ]
+            rendered = ", ".join(
+                clean_discovery_text(part, 150) for part in parts if part
+            )
+            if rendered:
+                return rendered
+
+    applicant_location = first_text(job.get("applicantLocationRequirements"))
+    if applicant_location:
+        return applicant_location
+    if str(job.get("jobLocationType") or "").upper() == "TELECOMMUTE":
+        return "Remote"
+    return ""
+
+
+def extract_experience_years(job: Dict[str, Any]) -> int:
+    experience_text = " ".join(
+        filter(
+            None,
+            [
+                clean_discovery_text(job.get("experienceRequirements"), 1000),
+                clean_discovery_text(job.get("qualifications"), 1000),
+            ],
+        )
+    )
+    match = re.search(
+        r"(\d{1,2})(?:\s*(?:-|–)\s*\d{1,2})?\s*\+?\s*years?",
+        experience_text,
+        re.I,
+    )
+    return max(int(match.group(1)), 0) if match else 0
+
+
+class DiscoveryHtmlParser(HTMLParser):
+    """Collect JSON-LD, links, and visible Lever posting-card fields."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.json_ld_blocks: List[str] = []
+        self.links: List[Tuple[str, str]] = []
+        self.lever_cards: List[Dict[str, str]] = []
+        self._in_json_ld = False
+        self._json_parts: List[str] = []
+        self._link_href: Optional[str] = None
+        self._link_parts: List[str] = []
+        self._lever_card: Optional[Dict[str, Any]] = None
+        self._lever_root_tag: Optional[str] = None
+        self._lever_root_depth = 0
+        self._lever_title_tag: Optional[str] = None
+        self._lever_location_tag: Optional[str] = None
+
+    def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        tag_name = tag.lower()
+        attributes = {key.lower(): value for key, value in attrs}
+        classes = {
+            item.strip().lower()
+            for item in str(attributes.get("class") or "").split()
+            if item.strip()
+        }
+        if (
+            self._lever_card is None
+            and tag_name in {"article", "div", "li"}
+            and "posting" in classes
+        ):
+            self._lever_card = {
+                "href": "",
+                "title_parts": [],
+                "location_parts": [],
+                "text_parts": [],
+            }
+            self._lever_root_tag = tag_name
+            self._lever_root_depth = 1
+        elif (
+            self._lever_card is not None
+            and tag_name == self._lever_root_tag
+        ):
+            self._lever_root_depth += 1
+
+        if self._lever_card is not None:
+            if (
+                tag_name == "a"
+                and attributes.get("href")
+                and (
+                    "posting-title" in classes
+                    or not self._lever_card.get("href")
+                )
+            ):
+                self._lever_card["href"] = str(attributes["href"])
+
+            data_qa = str(attributes.get("data-qa") or "").lower()
+            if (
+                "posting-name" in classes
+                or data_qa == "posting-name"
+                or (tag_name in {"h4", "h5"} and "posting-title" not in classes)
+            ):
+                self._lever_title_tag = tag_name
+            if (
+                "sort-by-location" in classes
+                or "posting-location" in classes
+                or data_qa == "posting-location"
+            ):
+                self._lever_location_tag = tag_name
+
+        if tag_name == "script" and "ld+json" in str(attributes.get("type") or "").lower():
+            self._in_json_ld = True
+            self._json_parts = []
+        elif tag_name == "a" and attributes.get("href"):
+            self._link_href = str(attributes["href"])
+            self._link_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._in_json_ld:
+            self._json_parts.append(data)
+        if self._link_href is not None:
+            self._link_parts.append(data)
+        if self._lever_card is not None and data.strip():
+            self._lever_card["text_parts"].append(data)
+            if self._lever_title_tag is not None:
+                self._lever_card["title_parts"].append(data)
+            if self._lever_location_tag is not None:
+                self._lever_card["location_parts"].append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag_name = tag.lower()
+        if tag_name == "script" and self._in_json_ld:
+            self.json_ld_blocks.append("".join(self._json_parts))
+            self._in_json_ld = False
+            self._json_parts = []
+        elif tag_name == "a" and self._link_href is not None:
+            self.links.append((self._link_href, " ".join(self._link_parts)))
+            self._link_href = None
+            self._link_parts = []
+
+        if tag_name == self._lever_title_tag:
+            self._lever_title_tag = None
+        if tag_name == self._lever_location_tag:
+            self._lever_location_tag = None
+
+        if self._lever_card is not None and tag_name == self._lever_root_tag:
+            self._lever_root_depth -= 1
+            if self._lever_root_depth <= 0:
+                self.lever_cards.append(
+                    {
+                        "href": clean_discovery_text(
+                            self._lever_card.get("href"), 2000
+                        ),
+                        "title": clean_discovery_text(
+                            " ".join(self._lever_card.get("title_parts", [])), 300
+                        ),
+                        "location": clean_discovery_text(
+                            " ".join(self._lever_card.get("location_parts", [])),
+                            500,
+                        ),
+                        "text": clean_discovery_text(
+                            " ".join(self._lever_card.get("text_parts", [])), 1000
+                        ),
+                    }
+                )
+                self._lever_card = None
+                self._lever_root_tag = None
+                self._lever_root_depth = 0
+                self._lever_title_tag = None
+                self._lever_location_tag = None
+
+
+IGNORED_DISCOVERY_LINK_TEXT = {
+    "apply",
+    "apply now",
+    "apply for this job",
+    "careers",
+    "career opportunities",
+    "home",
+    "home page",
+    "jobs",
+    "job openings",
+    "jobs powered by",
+    "learn more",
+    "powered by",
+    "read more",
+    "search jobs",
+    "view",
+    "view job",
+    "view jobs",
+}
+
+
+def is_lever_job_url(candidate_url: str, source_url: str) -> bool:
+    absolute_url = urljoin(source_url, str(candidate_url or ""))
+    parsed = urlparse(absolute_url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname != "jobs.lever.co":
+        return False
+
+    source_parts = [part for part in urlparse(source_url).path.split("/") if part]
+    job_parts = [part for part in parsed.path.split("/") if part]
+    if len(source_parts) < 1 or len(job_parts) != 2:
+        return False
+    if job_parts[0].casefold() != source_parts[0].casefold():
+        return False
+
+    posting_id = job_parts[1].lower()
+    return posting_id not in {"apply", "jobs", "search"}
+
+
+def infer_discovery_skills(value: str) -> str:
+    searchable = clean_discovery_text(value, 8000).casefold()
+    skill_patterns = [
+        ("Python", (r"\bpython\b",)),
+        ("JavaScript", (r"\bjavascript\b", r"\bjs\b")),
+        ("TypeScript", (r"\btypescript\b",)),
+        ("React", (r"\breact(?:\.js)?\b",)),
+        ("Node.js", (r"\bnode(?:\.js|js)?\b",)),
+        ("PHP", (r"\bphp\b",)),
+        ("Symfony", (r"\bsymfony\b",)),
+        ("Java", (r"\bjava\b",)),
+        (".NET", (r"\.net\b", r"\bdotnet\b")),
+        ("C#", (r"\bc#\b", r"\bc-sharp\b")),
+        ("C++", (r"\bc\+\+\b",)),
+        ("Go", (r"\bgolang\b", r"\bgo developer\b")),
+        ("Rust", (r"\brust\b",)),
+        ("SQL", (r"\bsql\b",)),
+        ("AWS", (r"\baws\b", r"amazon web services")),
+        ("Azure", (r"\bazure\b",)),
+        ("GCP", (r"\bgcp\b", r"google cloud")),
+        ("Docker", (r"\bdocker\b",)),
+        ("Kubernetes", (r"\bkubernetes\b", r"\bk8s\b")),
+        ("Playwright", (r"\bplaywright\b",)),
+        ("Selenium", (r"\bselenium\b",)),
+        ("Machine Learning", (r"machine learning",)),
+        ("AI", (r"artificial intelligence", r"\bai\b")),
+    ]
+    skills = [
+        label
+        for label, patterns in skill_patterns
+        if any(re.search(pattern, searchable, re.I) for pattern in patterns)
+    ]
+    return ", ".join(skills)
+
+
+def parse_lever_link_text(value: str) -> Tuple[str, str]:
+    visible_text = clean_discovery_text(value, 1200)
+    visible_text = re.sub(r"^apply\s+", "", visible_text, flags=re.I).strip()
+    marker = re.search(r"\s+(Remote|Hybrid|On-site)\s+[—-]\s+", visible_text, re.I)
+    if not marker:
+        return visible_text, "Remote / Not specified"
+
+    title = visible_text[: marker.start()].strip()
+    metadata = visible_text[marker.start() :].strip()
+    metadata = re.sub(
+        r"^(Remote|Hybrid|On-site)\s+[—-]\s+",
+        "",
+        metadata,
+        flags=re.I,
+    )
+    metadata = re.sub(
+        r"^(Full-Time|Part-Time|Contractual|Contract|Internship)\s*\|\s*(Remote|Hybrid|On-site)\s*",
+        "",
+        metadata,
+        flags=re.I,
+    ).strip()
+    return title, metadata or marker.group(1)
+
+
+def markdown_links(markdown: str) -> List[Tuple[str, str]]:
+    return [
+        (match.group("url").strip(), match.group("text").replace("\\[", "[").replace("\\]", "]"))
+        for match in re.finditer(
+            r"\[(?P<text>.+?)\]\((?P<url>(?:https?://|/)[^)]+)\)",
+            str(markdown or ""),
+            re.S,
+        )
+    ]
+
+
+def walk_json_ld(value: Any) -> List[Dict[str, Any]]:
+    jobs: List[Dict[str, Any]] = []
+    if isinstance(value, list):
+        for item in value:
+            jobs.extend(walk_json_ld(item))
+    elif isinstance(value, dict):
+        job_type = value.get("@type")
+        job_types = job_type if isinstance(job_type, list) else [job_type]
+        if any(str(item).lower() == "jobposting" for item in job_types):
+            jobs.append(value)
+        for key in ("@graph", "itemListElement", "mainEntity"):
+            if key in value:
+                jobs.extend(walk_json_ld(value[key]))
+    return jobs
+
+
+def extract_allowlisted_jobs(
+    html: str,
+    source_url: str,
+    source_name: str,
+    markdown: str = "",
+) -> List[Dict[str, Any]]:
+    parser = DiscoveryHtmlParser()
+    parser.feed(html or "")
+    jobs: List[Dict[str, Any]] = []
+
+    for block in parser.json_ld_blocks:
+        try:
+            job_records = walk_json_ld(json.loads(block))
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        for job in job_records:
+            title = clean_discovery_text(job.get("title") or job.get("name"), 300)
+            if not title:
+                continue
+            organization = job.get("hiringOrganization")
+            company = first_text(organization) or clean_discovery_text(source_name, 300)
+            job_url = urljoin(source_url, str(job.get("url") or source_url))
+            if urlparse(job_url).scheme not in {"http", "https"}:
+                job_url = source_url
+            jobs.append(
+                {
+                    "job_title": title,
+                    "company_name": company,
+                    "location": extract_location(job),
+                    "required_skills": clean_discovery_text(job.get("skills"), 1500),
+                    "experience_required": extract_experience_years(job),
+                    "job_description": clean_discovery_text(job.get("description"), 6000),
+                    "job_url": job_url,
+                }
+            )
+
+    is_lever_source = urlparse(source_url).hostname == "jobs.lever.co"
+
+    if not jobs and is_lever_source:
+        for card in parser.lever_cards:
+            job_url = urljoin(source_url, card.get("href") or "")
+            if not is_lever_job_url(job_url, source_url):
+                continue
+
+            title = clean_discovery_text(card.get("title"), 300)
+            location = clean_discovery_text(card.get("location"), 500)
+            card_text = clean_discovery_text(card.get("text"), 1000)
+            if not title:
+                title, fallback_location = parse_lever_link_text(card_text)
+                location = location or fallback_location
+            if not title or title.casefold() in IGNORED_DISCOVERY_LINK_TEXT:
+                continue
+
+            description = clean_discovery_text(
+                re.sub(re.escape(title), "", card_text, count=1, flags=re.I),
+                600,
+            )
+            jobs.append(
+                {
+                    "job_title": title,
+                    "company_name": clean_discovery_text(source_name, 300),
+                    "location": location or "Remote / Not specified",
+                    "required_skills": infer_discovery_skills(
+                        f"{title} {description}"
+                    ),
+                    "experience_required": 0,
+                    "job_description": description,
+                    "job_url": job_url,
+                }
+            )
+
+    if not jobs:
+        fallback_links = list(parser.links)
+        fallback_links.extend(markdown_links(markdown))
+        for href, link_text in fallback_links:
+            raw_title = clean_discovery_text(link_text, 1200)
+            title = clean_discovery_text(raw_title, 300)
+            href_lower = href.lower()
+            lever_job = is_lever_source and is_lever_job_url(href, source_url)
+            looks_like_job = lever_job or any(
+                token in href_lower
+                for token in (
+                    "/job/",
+                    "/jobs/",
+                    "jobid=",
+                    "job_id=",
+                    "/opening",
+                    "/position",
+                )
+            )
+            if lever_job:
+                title, location = parse_lever_link_text(raw_title)
+            else:
+                location = ""
+            if (
+                not looks_like_job
+                or len(title) < 4
+                or title.casefold() in IGNORED_DISCOVERY_LINK_TEXT
+                or title.casefold().startswith("jobs powered by")
+            ):
+                continue
+            job_url = urljoin(source_url, href)
+            if urlparse(job_url).scheme not in {"http", "https"}:
+                continue
+            description = clean_discovery_text(raw_title, 600)
+            jobs.append(
+                {
+                    "job_title": title,
+                    "company_name": clean_discovery_text(source_name, 300),
+                    "location": location or "Remote / Not specified",
+                    "required_skills": infer_discovery_skills(
+                        f"{title} {description}"
+                    ),
+                    "experience_required": 0,
+                    "job_description": description,
+                    "job_url": job_url,
+                }
+            )
+
+    unique_jobs: List[Dict[str, Any]] = []
+    seen_urls = set()
+    seen_titles = set()
+    for job in jobs:
+        url_key = job["job_url"].casefold().rstrip("/")
+        title_key = job["job_title"].casefold()
+        if url_key in seen_urls or title_key in seen_titles:
+            continue
+        seen_urls.add(url_key)
+        seen_titles.add(title_key)
+        unique_jobs.append(job)
+        if len(unique_jobs) >= 100:
+            break
+    return unique_jobs
+
+
+async def discover_allowlisted_jobs(
+    source_url: str,
+    source_name: str,
+    source_key: str,
+) -> List[Dict[str, Any]]:
+    try:
+        from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
+    except Exception as error:
+        raise RuntimeError(
+            "Crawl4AI is unavailable. Run: pip install -r requirements.txt && crawl4ai-setup"
+        ) from error
+
+    safe_url = validate_public_discovery_url(source_url)
+    crawl_config = CrawlerRunConfig(cache_mode=CacheMode.BYPASS)
+    browser_config = BrowserConfig(
+        headless=True,
+        java_script_enabled=False,
+        text_mode=True,
+        light_mode=True,
+    )
+    async with AsyncWebCrawler(config=browser_config) as crawler:
+        async def enforce_read_only_requests(page: Any, **_: Any) -> Any:
+            async def handle_route(route: Any, request: Any) -> None:
+                method = str(request.method or "").upper()
+                request_url = str(request.url or "")
+                scheme = urlparse(request_url).scheme.lower()
+
+                if method not in {"GET", "HEAD", "OPTIONS"}:
+                    await route.abort()
+                    return
+                if scheme in {"about", "blob", "data"}:
+                    await route.continue_()
+                    return
+                try:
+                    validate_public_discovery_url(request_url)
+                except ValueError:
+                    await route.abort()
+                    return
+                await route.continue_()
+
+            await page.route("**/*", handle_route)
+            return page
+
+        crawler.crawler_strategy.set_hook(
+            "on_page_context_created",
+            enforce_read_only_requests,
+        )
+        result = await crawler.arun(url=safe_url, config=crawl_config)
+
+    if not result.success:
+        raise RuntimeError(result.error_message or "Crawl4AI could not read the allowlisted source.")
+
+    final_url = str(
+        getattr(result, "redirected_url", None)
+        or getattr(result, "url", None)
+        or safe_url
+    )
+    validate_public_discovery_url(final_url)
+    page_html = str(getattr(result, "html", None) or getattr(result, "cleaned_html", None) or "")
+    markdown_result = getattr(result, "markdown", "")
+    if not isinstance(markdown_result, str):
+        markdown_result = str(
+            getattr(markdown_result, "raw_markdown", None)
+            or getattr(markdown_result, "markdown_with_citations", None)
+            or ""
+        )
+    jobs = extract_allowlisted_jobs(
+        page_html,
+        final_url,
+        source_name,
+        markdown_result,
+    )
+
+    for job in jobs:
+        job.update(
+            {
+                "source_platform": clean_discovery_text(source_name, 300),
+                "source_key": clean_discovery_text(source_key, 150),
+                "apply_mode": "manual_questions",
+                "discovery_source": "allowlisted_crawl4ai",
+            }
+        )
+    return jobs
+
+
+def run_allowlisted_discovery_isolated(payload: Dict[str, str]) -> List[Dict[str, Any]]:
+    """Give Playwright its own Windows-compatible event loop and process."""
+    timeout_ms = int(os.getenv("AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS", "90000"))
+    result_marker = "HIREPILOT_ALLOWLISTED_CRAWL_RESULT="
+    command = [
+        sys.executable,
+        "-c",
+        (
+            "import asyncio, json, sys; "
+            "policy=getattr(asyncio, 'WindowsProactorEventLoopPolicy', None); "
+            "sys.platform == 'win32' and policy and asyncio.set_event_loop_policy(policy()); "
+            "from main import discover_allowlisted_jobs; "
+            "payload=json.loads(sys.stdin.read()); "
+            f"print('{result_marker}' + json.dumps(asyncio.run(discover_allowlisted_jobs(**payload))))"
+        ),
+    ]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(BASE_DIR),
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=max(timeout_ms / 1000, 15),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Read-only allowlisted discovery timed out.") from error
+    except OSError as error:
+        raise RuntimeError(f"Unable to start the isolated discovery process: {error}") from error
+
+    if completed.returncode != 0:
+        error_output = (completed.stderr or completed.stdout or "").strip()
+        error_line = next(
+            (line.strip() for line in reversed(error_output.splitlines()) if line.strip()),
+            "No error output was returned.",
+        )
+        raise RuntimeError(
+            "Isolated allowlisted discovery failed: "
+            + error_line[:1000]
+        )
+
+    result_line = next(
+        (line for line in reversed(completed.stdout.splitlines()) if line.startswith(result_marker)),
+        None,
+    )
+    if not result_line:
+        raise RuntimeError("Isolated allowlisted discovery returned no structured result.")
+    try:
+        jobs = json.loads(result_line[len(result_marker) :])
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Unable to parse isolated allowlisted discovery output.") from error
+    if not isinstance(jobs, list):
+        raise RuntimeError("Allowlisted discovery returned an invalid jobs payload.")
     return jobs
 
 
@@ -696,6 +1332,12 @@ class BrowserSmokePayload(BaseModel):
     requested_by_user_id: Optional[int] = None
 
 
+class AllowlistedDiscoveryPayload(BaseModel):
+    source_url: str
+    source_name: str
+    source_key: str
+
+
 def safe_profile_value(value: Optional[str], fallback: str) -> Tuple[str, bool]:
     if value is not None and str(value).strip():
         return str(value).strip(), False
@@ -961,6 +1603,55 @@ def crawl4ai_demo_discovery():
             "real_web_crawl": False,
             "jobs": jobs,
         }
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/discovery/allowlisted-crawl")
+def allowlisted_crawl_discovery(payload: AllowlistedDiscoveryPayload):
+    """
+    Read and extract public job listings from an administrator-allowlisted URL.
+
+    The worker loads one URL and parses its returned markup. It never logs in,
+    clicks an apply control, submits a form, bypasses access controls, or
+    performs an application action.
+    """
+    if not get_crawl4ai_status()["available"]:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Crawl4AI is unavailable. Run: pip install -r requirements.txt "
+                "and then crawl4ai-setup."
+            ),
+        )
+
+    try:
+        source_url = validate_public_discovery_url(payload.source_url)
+        jobs = run_allowlisted_discovery_isolated(
+            {
+                "source_url": source_url,
+                "source_name": clean_discovery_text(payload.source_name, 150),
+                "source_key": clean_discovery_text(payload.source_key, 150),
+            }
+        )
+        return {
+            "success": True,
+            "mode": "allowlisted_crawl4ai",
+            "real_web_crawl": True,
+            "jobs": jobs,
+            "discovered_count": len(jobs),
+            "message": (
+                (
+                    f"Allowlisted Crawl4AI discovery found {len(jobs)} job"
+                    f"{'s' if len(jobs) != 1 else ''}."
+                )
+                if jobs
+                else "Allowlisted Crawl4AI discovery completed, but no job postings were found in the public HTML or markdown."
+            )
+            + " No applications were submitted.",
+        }
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 

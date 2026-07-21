@@ -116,6 +116,7 @@ AI_WORKER_TIMEOUT_MS=30000
 AI_WORKER_HEALTH_TIMEOUT_MS=5000
 AI_BROWSER_TEST_TIMEOUT_MS=30000
 AI_CRAWL4AI_DEMO_TIMEOUT_MS=60000
+AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS=90000
 ```
 
 Important details:
@@ -182,6 +183,7 @@ Apply the files in this exact order:
 9. `009_external_job_review_system.sql`
 10. `010_external_source_allowlist.sql`
 11. `011_recruiter_company_profile.sql`
+12. `012_real_allowlisted_discovery.sql`
 
 PowerShell:
 
@@ -324,6 +326,46 @@ Invoke-RestMethod `
 
 This endpoint must return three local demo jobs and `real_web_crawl: false`. In the product flow, run discovery from the Admin Control Panel so allowlist and role checks are enforced.
 
+### Allowlisted read-only web discovery
+
+Migration `012_real_allowlisted_discovery.sql` adds the source permission flag,
+discovery-run audit records, and stored job provenance required by this flow.
+After applying it:
+
+1. Sign in as an Admin and create a source with a public `https://` careers URL.
+2. Review the source, then explicitly set it to **Approved** and **Enabled**.
+3. Select **Allow Read-only Crawl**. This permission cannot be enabled before
+   the other two governance checks pass.
+4. Open Discovery and select **Run Discovery** for that source.
+5. Review every newly inserted job in External Jobs Review. New jobs use
+   `pending_review` and are not returned to Candidates until approved.
+
+The worker loads public markup and extracts conservative job records. It does
+not log in, submit forms, click Apply, bypass CAPTCHA/paywalls, or mutate the
+source website. Page JavaScript is disabled for real-source discovery, and
+browser requests that are not GET, HEAD, or OPTIONS are aborted. Local/private/reserved network targets, embedded credentials,
+and non-HTTP(S) URLs are rejected. Source approval is authorization for a
+read-only page load only; administrators remain responsible for site terms,
+robots guidance, and applicable law.
+
+Direct worker validation (use a public URL you are authorized to read):
+
+```powershell
+$body = @{
+  source_url = "https://careers.example.org/jobs"
+  source_name = "Example Careers"
+  source_key = "example_careers"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/discovery/allowlisted-crawl `
+  -ContentType "application/json" `
+  -Body $body | ConvertTo-Json -Depth 10
+```
+
+Prefer the Admin Control Panel for normal testing because the backend enforces
+the source allowlist and writes the discovery audit record.
+
 ### Playwright safe browser test
 
 Use the development-only Candidate control. It is designed for local dummy HTML only. Do not point it at LinkedIn, Indeed, a company career page, or any real application form.
@@ -357,6 +399,16 @@ cd ai-agent
 pip install -r requirements.txt
 crawl4ai-setup
 ```
+
+### Allowlisted discovery is blocked or fails
+
+- Confirm migration `012_real_allowlisted_discovery.sql` was applied.
+- Confirm the source has a public HTTP(S) base URL and contains no credentials.
+- Confirm it is Approved, Enabled, and marked **Allow Read-only Crawl**.
+- Confirm `AI_WORKER_ENABLED=true` and the FastAPI worker is reachable.
+- Increase `AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS` only for a known, approved source.
+- A successful run with zero jobs is valid when the page exposes no conservative
+  job links or JobPosting structured data; no application action is attempted.
 
 Restart Uvicorn and recheck `/health`.
 

@@ -877,6 +877,99 @@ button:disabled {
   font-size: 12px;
 }
 
+.admin-readonly-source-note {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 12px;
+}
+
+.admin-source-run-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.admin-source-run-summary p {
+  flex-basis: 100%;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.admin-real-discovery-section {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #c7d2fe;
+}
+
+.admin-real-discovery-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-real-discovery-heading h3,
+.admin-real-discovery-card h4 {
+  margin: 0 0 5px;
+}
+
+.admin-real-discovery-heading p,
+.admin-real-discovery-card small {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.admin-real-discovery-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-real-discovery-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.admin-real-discovery-card > div {
+  min-width: 0;
+}
+
+.admin-real-discovery-card .admin-source-badges {
+  margin-bottom: 9px;
+}
+
+.admin-real-discovery-card .admin-source-reference {
+  margin: 0 0 5px;
+}
+
+.admin-real-discovery-card button {
+  flex: 0 0 auto;
+}
+
 .admin-source-actions {
   margin-top: 14px;
   padding-top: 14px;
@@ -1328,6 +1421,16 @@ button:disabled {
     width: 100%;
   }
 
+  .admin-real-discovery-heading,
+  .admin-real-discovery-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-real-discovery-card button {
+    width: 100%;
+  }
+
   .admin-source-form-grid,
   .admin-source-list,
   .recruiter-company-form-grid,
@@ -1655,6 +1758,34 @@ button:disabled {
 .score-pill {
   background: #eef2ff;
   color: #3730a3;
+}
+
+.score-pill.match-strong {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.score-pill.match-good {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.score-pill.match-low {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.score-pill.match-unavailable {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.external-match-empty {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .status-applied,

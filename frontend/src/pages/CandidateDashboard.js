@@ -346,6 +346,28 @@ const isSafeDummyJob = (job) =>
 const isSimulatedPlatform = (job) =>
   /linkedin simulation|indeed simulation/i.test(job?.source_platform || "");
 
+const externalMatchPresentation = (job) => {
+  const score = Number.isFinite(Number(job?.match_score))
+    ? Math.max(0, Math.min(100, Math.round(Number(job.match_score))))
+    : 0;
+  const label =
+    job?.match_label || (score > 0 ? "Low match" : "Match unavailable");
+  const level =
+    job?.match_level ||
+    (label === "Strong match"
+      ? "strong"
+      : label === "Good match"
+      ? "good"
+      : label === "Low match"
+      ? "low"
+      : "unavailable");
+
+  return {
+    level,
+    text: label === "Match unavailable" ? label : `${score}% • ${label}`,
+  };
+};
+
 const employerTrustBadge = (verificationStatus) => {
   if (verificationStatus === "verified") {
     return { label: "Verified Employer", className: "verified" };
@@ -1746,7 +1768,7 @@ function CandidateDashboard() {
       <div className="section-heading">
         <div>
           <p className="eyebrow">External Discovery</p>
-          <h2>External Matched Jobs</h2>
+          <h2>Approved External Jobs</h2>
           <p className="muted">
             Browse approved external opportunities reviewed by HirePilot.
           </p>
@@ -1783,7 +1805,13 @@ function CandidateDashboard() {
                     </span>
                   )}
                 </div>
-                <span className="score-pill">{job.match_score}% match</span>
+                <span
+                  className={`score-pill match-${
+                    externalMatchPresentation(job).level
+                  }`}
+                >
+                  {externalMatchPresentation(job).text}
+                </span>
               </div>
 
               <div>
@@ -1811,6 +1839,12 @@ function CandidateDashboard() {
                       {skill}
                     </span>
                   ))}
+                  {(job.matched_skills || []).length === 0 && (
+                    <span className="external-match-empty">
+                      No direct skill overlap identified. This approved job is
+                      still available to review.
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1881,6 +1915,13 @@ function CandidateDashboard() {
                       Simulated source
                     </span>
                   )}
+                  <span
+                    className={`score-pill match-${
+                      externalMatchPresentation(selectedExternalJob).level
+                    }`}
+                  >
+                    {externalMatchPresentation(selectedExternalJob).text}
+                  </span>
                 </div>
                 <h2 id="external-preview-title">
                   {selectedExternalJob.job_title || "External job"}
