@@ -281,6 +281,15 @@ def validate_public_discovery_url(source_url: str) -> str:
     hostname = parsed.hostname.lower().rstrip(".")
     if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
         raise ValueError("Local or private discovery targets are not allowed.")
+    if (
+        hostname == "linkedin.com"
+        or hostname.endswith(".linkedin.com")
+        or hostname == "indeed.com"
+        or hostname.endswith(".indeed.com")
+    ):
+        raise ValueError(
+            "LinkedIn and Indeed are not supported discovery targets in this read-only phase."
+        )
 
     try:
         addresses = {
@@ -555,10 +564,14 @@ def infer_discovery_skills(value: str) -> str:
         ("GCP", (r"\bgcp\b", r"google cloud")),
         ("Docker", (r"\bdocker\b",)),
         ("Kubernetes", (r"\bkubernetes\b", r"\bk8s\b")),
+        ("DevOps", (r"\bdevops\b", r"\bdevsecops\b")),
         ("Playwright", (r"\bplaywright\b",)),
         ("Selenium", (r"\bselenium\b",)),
-        ("Machine Learning", (r"machine learning",)),
+        ("Machine Learning", (r"machine learning", r"\bml engineer\b", r"\bml\b")),
         ("AI", (r"artificial intelligence", r"\bai\b")),
+        ("Data", (r"\bdata engineer\b", r"\bdata scientist\b", r"\bdata analytics?\b")),
+        ("Django", (r"\bdjango\b",)),
+        ("FastAPI", (r"\bfastapi\b",)),
     ]
     skills = [
         label
@@ -601,6 +614,44 @@ def markdown_links(markdown: str) -> List[Tuple[str, str]]:
             re.S,
         )
     ]
+
+
+def is_common_ats_job_url(candidate_url: str, source_url: str) -> bool:
+    """Conservatively recognize public job-detail URLs without following them."""
+    absolute_url = urljoin(source_url, str(candidate_url or ""))
+    parsed = urlparse(absolute_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+
+    host = parsed.hostname.casefold()
+    path = parsed.path.casefold().rstrip("/")
+    query = parsed.query.casefold()
+    path_parts = [part for part in path.split("/") if part]
+
+    if is_lever_job_url(absolute_url, source_url):
+        return True
+    if host in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+        return "/jobs/" in path and len(path_parts) >= 3
+    if host == "jobs.ashbyhq.com":
+        return len(path_parts) >= 2 and path_parts[-1] not in {"jobs", "apply"}
+    if host == "apply.workable.com":
+        return "/j/" in path or "/view/" in path
+
+    return any(
+        token in path or token in query
+        for token in (
+            "/job/",
+            "/jobs/",
+            "/job-openings/",
+            "/open-positions/",
+            "/careers/job",
+            "/opening/",
+            "/position/",
+            "jobid=",
+            "job_id=",
+            "gh_jid=",
+        )
+    )
 
 
 def walk_json_ld(value: Any) -> List[Dict[str, Any]]:
@@ -697,19 +748,8 @@ def extract_allowlisted_jobs(
         for href, link_text in fallback_links:
             raw_title = clean_discovery_text(link_text, 1200)
             title = clean_discovery_text(raw_title, 300)
-            href_lower = href.lower()
             lever_job = is_lever_source and is_lever_job_url(href, source_url)
-            looks_like_job = lever_job or any(
-                token in href_lower
-                for token in (
-                    "/job/",
-                    "/jobs/",
-                    "jobid=",
-                    "job_id=",
-                    "/opening",
-                    "/position",
-                )
-            )
+            looks_like_job = is_common_ats_job_url(href, source_url)
             if lever_job:
                 title, location = parse_lever_link_text(raw_title)
             else:
@@ -1309,6 +1349,7 @@ class ExternalApplyPayload(BaseModel):
     source_platform: Optional[str] = None
     job_url: Optional[str] = None
     apply_mode: str
+    discovery_source: Optional[str] = None
     match_score: int
     matched_skills: List[str] = []
     missing_skills: List[str] = []
@@ -1763,7 +1804,11 @@ def simulate_external_apply(payload: ExternalApplyPayload):
                     },
                 )
 
-                if payload.match_score < 40:
+                is_reviewed_read_only_job = (
+                    payload.discovery_source == "allowlisted_crawl4ai"
+                )
+
+                if payload.match_score < 40 and not is_reviewed_read_only_job:
                     add_step(
                         cursor,
                         payload.agent_run_id,

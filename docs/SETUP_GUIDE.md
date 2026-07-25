@@ -184,6 +184,7 @@ Apply the files in this exact order:
 10. `010_external_source_allowlist.sql`
 11. `011_recruiter_company_profile.sql`
 12. `012_real_allowlisted_discovery.sql`
+13. `013_automatic_external_discovery_scheduler.sql`
 
 PowerShell:
 
@@ -281,6 +282,21 @@ node server.js
 
 Open `http://localhost:5000/`. A working database connection returns the backend status and database time.
 
+Automatic discovery is opt-in. Add these safe defaults to the local backend
+environment when configuring the scheduler:
+
+```env
+AUTO_DISCOVERY_ENABLED=false
+AUTO_DISCOVERY_POLL_INTERVAL_MS=60000
+AUTO_DISCOVERY_MAX_SOURCES_PER_CYCLE=3
+AUTO_DISCOVERY_REQUEST_TIMEOUT_MS=30000
+```
+
+Set `AUTO_DISCOVERY_ENABLED=true` only after migration `013` is applied and at
+least one source is approved, enabled, allowed for read-only crawling, and
+enabled for automatic discovery. Restart the backend after changing the flag.
+The scheduler records failures instead of crashing the backend.
+
 ### Terminal 3 — frontend
 
 ```powershell
@@ -336,7 +352,7 @@ After applying it:
 2. Review the source, then explicitly set it to **Approved** and **Enabled**.
 3. Select **Allow Read-only Crawl**. This permission cannot be enabled before
    the other two governance checks pass.
-4. Open Discovery and select **Run Discovery** for that source.
+4. In **External Sources**, select **Run Discovery Now** for that source.
 5. Review every newly inserted job in External Jobs Review. New jobs use
    `pending_review` and are not returned to Candidates until approved.
 
@@ -365,6 +381,27 @@ Invoke-RestMethod -Method Post `
 
 Prefer the Admin Control Panel for normal testing because the backend enforces
 the source allowlist and writes the discovery audit record.
+
+### Source catalog and automatic schedule
+
+Migration `013_automatic_external_discovery_scheduler.sql` adds the catalog and
+per-source schedule fields. Catalog examples are recommendations whose URLs and
+terms may change. Importing one always creates a pending, disabled source with
+real crawling and automatic discovery disabled.
+
+To activate a schedule:
+
+1. Import or create a source.
+2. Approve it and enable it.
+3. Allow read-only crawling.
+4. Set an interval of at least five minutes and enable automatic discovery.
+5. Set `AUTO_DISCOVERY_ENABLED=true` locally and restart the backend.
+6. Review **Discovery Runs** and **External Job Review**.
+
+Newly inserted scheduled jobs use `pending_review`; Candidates cannot see them
+until an Admin approves them. Existing source data is preserved by the
+migration. Discovery is read-only: no login, form submission, CAPTCHA bypass,
+or real application is performed.
 
 ### Playwright safe browser test
 

@@ -117,6 +117,7 @@ function Get-ObjectProperty {
 Write-Host ""
 Write-Host "HirePilot AI Demo Health Check" -ForegroundColor White
 Write-Host "Local read-only checks only; no data or files are modified." -ForegroundColor DarkGray
+Write-Host "Automatic discovery requires AUTO_DISCOVERY_ENABLED=true plus authenticated source controls; verify it in Admin > Discovery Runs." -ForegroundColor DarkGray
 Write-Host ""
 
 $backendResult = Invoke-LocalGet -Urls @(

@@ -89,7 +89,8 @@ Show:
 - automatic redirect to `/admin`;
 - the **Admin Control Panel** role label;
 - Overview counts;
-- the Recruiters, Company Verification, External Sources, Discovery, and External Job Review tabs.
+- the Recruiters, Company Verification, External Sources, Source Catalog,
+  Discovery Runs, and External Job Review tabs.
 
 Expected story: platform governance is separated from Candidate and Recruiter workflows.
 
@@ -121,12 +122,13 @@ Explain that creating a source does not contact it. A source must be independent
 Optional governance demonstration:
 
 1. Disable the source.
-2. Open Discovery and show that the operation is unavailable.
+2. Show that the discovery operation is unavailable in External Sources.
 3. Re-enable and approve the source.
 
 ## 5. Run Crawl4AI demo discovery
 
-Open **Discovery** and read the safety note: “Safe raw local demo HTML only. No external website is contacted.”
+In **External Sources**, read the safety note: “Safe raw local demo HTML only.
+No external website is contacted.”
 
 Click **Run Crawl4AI Demo Discovery**.
 
@@ -139,6 +141,18 @@ Crawl4AI demo discovery completed. Discovered: 3; inserted: X; updated: Y.
 The exact inserted and updated counts depend on whether the demo was run before. Repeated runs update matching records rather than intentionally creating duplicates.
 
 Expected story: the Admin invokes the backend, the backend validates the allowlist, the worker extracts three deterministic jobs from raw local HTML, and the backend stores them for review.
+
+Optional production-operations demonstration:
+
+1. Open **Source Catalog** and import a source.
+2. Show that it appears pending and disabled in **External Sources**.
+3. Approve, enable, and explicitly allow read-only crawling.
+4. Configure the interval and enable automatic discovery.
+5. Open **Discovery Runs** to show the manual/automatic audit trail.
+
+The backend scheduler remains off unless `AUTO_DISCOVERY_ENABLED=true`. Every
+newly inserted job remains pending review, and discovery never submits an
+external application.
 
 ## 6. Approve and hide external jobs
 

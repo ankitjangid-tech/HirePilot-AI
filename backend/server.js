@@ -40,6 +40,9 @@ const cors = require("cors");
 require("dotenv").config();
 
 const pool = require("./config/db");
+const {
+  startExternalDiscoveryScheduler,
+} = require("./services/externalDiscoveryScheduler");
 
 const app = express();
 const authRoutes = require("./routes/authRoutes");
@@ -133,4 +136,5 @@ const PORT = Number(process.env.PORT || 5000);
 
 app.listen(PORT, ()=>{
     console.log(`Server running on port ${PORT}`);
+    startExternalDiscoveryScheduler();
 });

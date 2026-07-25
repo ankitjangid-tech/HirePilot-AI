@@ -11,6 +11,10 @@ const {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getExternalSourceCatalog,
+  importExternalSourceCatalog,
+  updateExternalSourceAutoDiscovery,
+  getExternalDiscoveryRuns,
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
@@ -64,6 +68,34 @@ router.patch(
   verifyToken,
   authorizeRole("admin"),
   updateExternalSource
+);
+
+router.get(
+  "/external-source-catalog",
+  verifyToken,
+  authorizeRole("admin"),
+  getExternalSourceCatalog
+);
+
+router.post(
+  "/external-source-catalog/:catalogId/import",
+  verifyToken,
+  authorizeRole("admin"),
+  importExternalSourceCatalog
+);
+
+router.patch(
+  "/external-sources/:sourceId/auto-discovery",
+  verifyToken,
+  authorizeRole("admin"),
+  updateExternalSourceAutoDiscovery
+);
+
+router.get(
+  "/external-discovery-runs",
+  verifyToken,
+  authorizeRole("admin"),
+  getExternalDiscoveryRuns
 );
 
 router.get(

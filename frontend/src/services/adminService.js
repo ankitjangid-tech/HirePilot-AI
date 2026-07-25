@@ -48,6 +48,40 @@ export const updateExternalSource = (token, sourceId, updates) => {
   );
 };
 
+export const getExternalSourceCatalog = (token, filters = {}) => {
+  return API.get("/admin/external-source-catalog", {
+    ...authHeaders(token),
+    params: filters,
+  });
+};
+
+export const importExternalSourceCatalog = (token, catalogId) => {
+  return API.post(
+    `/admin/external-source-catalog/${catalogId}/import`,
+    {},
+    authHeaders(token)
+  );
+};
+
+export const updateExternalSourceAutoDiscovery = (
+  token,
+  sourceId,
+  updates
+) => {
+  return API.patch(
+    `/admin/external-sources/${sourceId}/auto-discovery`,
+    updates,
+    authHeaders(token)
+  );
+};
+
+export const getExternalDiscoveryRuns = (token, limit = 100) => {
+  return API.get("/admin/external-discovery-runs", {
+    ...authHeaders(token),
+    params: { limit },
+  });
+};
+
 export const getRecruiterCompanies = (token) => {
   return API.get("/admin/companies", authHeaders(token));
 };

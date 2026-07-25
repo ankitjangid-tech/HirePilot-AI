@@ -489,6 +489,7 @@ const callPythonWorker = async ({
         source_platform: job.source_platform,
         job_url: job.job_url,
         apply_mode: job.apply_mode,
+        discovery_source: job.discovery_source,
         match_score: match.match_score,
         matched_skills: match.matched_skills,
         missing_skills: match.missing_skills,
@@ -1176,7 +1177,10 @@ const executeExternalApplyAttempt = async ({
       });
     }
 
-    if (match.match_score < 40) {
+    const isReviewedReadOnlyJob =
+      job.discovery_source === "allowlisted_crawl4ai";
+
+    if (match.match_score < 40 && !isReviewedReadOnlyJob) {
       await logAgentAttempt({
         candidate_id: candidate.candidate_id,
         external_job_id,
@@ -2292,6 +2296,11 @@ const safeDiscoveryUrl = (value) => {
   try {
     const parsed = new URL(String(value || "").trim());
     const hostname = parsed.hostname.toLowerCase();
+    const prohibitedPortal =
+      hostname === "linkedin.com" ||
+      hostname.endsWith(".linkedin.com") ||
+      hostname === "indeed.com" ||
+      hostname.endsWith(".indeed.com");
 
     if (
       !["http:", "https:"].includes(parsed.protocol) ||
@@ -2300,7 +2309,8 @@ const safeDiscoveryUrl = (value) => {
       !hostname ||
       hostname === "localhost" ||
       hostname.endsWith(".localhost") ||
-      hostname.endsWith(".local")
+      hostname.endsWith(".local") ||
+      prohibitedPortal
     ) {
       return null;
     }
@@ -2459,7 +2469,7 @@ const runAllowlistedSourceDiscovery = async (req, res) => {
          $4::varchar(30)
        )
        RETURNING discovery_run_id`,
-      [source.external_source_id, req.user.user_id, sourceUrl, "queued"]
+      [source.external_source_id, req.user?.user_id || null, sourceUrl, "queued"]
     );
     discoveryRunId = runResult.rows[0].discovery_run_id;
 
@@ -2531,8 +2541,12 @@ const runAllowlistedSourceDiscovery = async (req, res) => {
       },
       {
         timeout: Math.max(
-          Number(process.env.AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS || 90000),
-          30000
+          Number(
+            req.discoveryTrigger === "automatic"
+              ? process.env.AUTO_DISCOVERY_REQUEST_TIMEOUT_MS || 30000
+              : process.env.AI_CRAWL4AI_DISCOVERY_TIMEOUT_MS || 90000
+          ),
+          5000
         ),
       }
     );
@@ -2692,6 +2706,8 @@ const runAllowlistedSourceDiscovery = async (req, res) => {
       updatedCount,
       summary: {
         mode: "read_only_allowlisted_discovery",
+        trigger:
+          req.discoveryTrigger === "automatic" ? "automatic" : "manual",
         source_key: source.source_key,
         worker_message: cleanDiscoveryValue(workerResponse.data.message, 1000),
         jobs: safeJobs.map((job) => ({
