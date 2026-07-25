@@ -346,6 +346,9 @@ const isSafeDummyJob = (job) =>
 const isSimulatedPlatform = (job) =>
   /linkedin simulation|indeed simulation/i.test(job?.source_platform || "");
 
+const isReadOnlyDiscoveredJob = (job) =>
+  job?.discovery_source === "allowlisted_crawl4ai";
+
 const externalMatchPresentation = (job) => {
   const score = Number.isFinite(Number(job?.match_score))
     ? Math.max(0, Math.min(100, Math.round(Number(job.match_score))))
@@ -1796,6 +1799,11 @@ function CandidateDashboard() {
                       Reviewed by HirePilot
                     </span>
                   )}
+                  {isReadOnlyDiscoveredJob(job) && (
+                    <span className="trust-badge trust-badge-readonly">
+                      Read-only source
+                    </span>
+                  )}
                   {isSafeDummyJob(job) && (
                     <span className="safe-demo-tag">Safe demo source</span>
                   )}
@@ -1907,6 +1915,11 @@ function CandidateDashboard() {
                       Reviewed by HirePilot
                     </span>
                   )}
+                  {isReadOnlyDiscoveredJob(selectedExternalJob) && (
+                    <span className="trust-badge trust-badge-readonly">
+                      Read-only source
+                    </span>
+                  )}
                   {isSafeDummyJob(selectedExternalJob) && (
                     <span className="safe-demo-tag">Safe demo source</span>
                   )}
@@ -1954,6 +1967,17 @@ function CandidateDashboard() {
                 <span>
                   This listing represents a simulated platform and is not a live
                   LinkedIn or Indeed page.
+                </span>
+              </div>
+            )}
+
+            {isReadOnlyDiscoveredJob(selectedExternalJob) && (
+              <div className="external-preview-safety-note reviewed">
+                <strong>Reviewed read-only source</strong>
+                <span>
+                  Discovery only reads the approved public page. Applying creates
+                  a manual action in HirePilot; no real external application is
+                  submitted automatically.
                 </span>
               </div>
             )}

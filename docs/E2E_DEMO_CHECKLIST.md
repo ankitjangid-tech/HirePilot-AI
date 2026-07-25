@@ -51,8 +51,14 @@ Use this fast checklist immediately before a presentation. For narration and det
 - [ ] Leave the demo Recruiter in `approved` status.
 - [ ] Open **External Sources** and **check the external source allowlist**.
 - [ ] Confirm `crawl4ai_demo` is both approved and enabled.
-- [ ] Open **Discovery** and **run Crawl4AI demo discovery**.
+- [ ] Run **Crawl4AI Demo Discovery** from **External Sources**.
 - [ ] Confirm the completion message shows discovered, inserted, and updated counts.
+- [ ] Open **Source Catalog**, import one source, and confirm it starts pending and disabled.
+- [ ] Approve and enable the imported source, allow read-only crawl, and set an interval of at least five minutes.
+- [ ] Enable automatic discovery only after all source safety gates pass.
+- [ ] With `AUTO_DISCOVERY_ENABLED=true` locally, restart the backend and wait for a scheduler cycle.
+- [ ] Open **Discovery Runs** and confirm the automatic run is completed or failed with a clear diagnostic.
+- [ ] Confirm newly inserted automatic jobs are `pending_review`.
 - [ ] Open **External Job Review** and **review external jobs**.
 - [ ] Approve at least one Crawl4AI demo job.
 - [ ] Optionally hide a different demo job and confirm the status changes.
@@ -96,7 +102,8 @@ Use this fast checklist immediately before a presentation. For narration and det
 - [ ] No horizontal scrollbar appears in any workspace.
 - [ ] Candidate, Recruiter, and Admin tabs switch correctly.
 - [ ] No raw stack trace is visible by default.
-- [ ] No real external website opened during discovery or application testing.
+- [ ] Only explicitly allowlisted public sources were contacted for read-only discovery; no external site was mutated.
+- [ ] No real external application was submitted; real-source applications use the manual fallback workflow.
 - [ ] The safe dummy run and interview flow completed successfully.
 - [ ] Browser tabs and terminals are arranged for a clean presentation.
 

@@ -8,6 +8,10 @@ import {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getExternalSourceCatalog,
+  importExternalSourceCatalog,
+  updateExternalSourceAutoDiscovery,
+  getExternalDiscoveryRuns,
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
@@ -36,7 +40,8 @@ const adminTabs = [
   { id: "recruiters", label: "Recruiters" },
   { id: "company-verification", label: "Company Verification" },
   { id: "external-sources", label: "External Sources" },
-  { id: "discovery", label: "Discovery" },
+  { id: "source-catalog", label: "Source Catalog" },
+  { id: "discovery-runs", label: "Discovery Runs" },
   { id: "external-job-review", label: "External Job Review" },
 ];
 
@@ -102,6 +107,16 @@ function AdminDashboard() {
   const [busySourceId, setBusySourceId] = useState(null);
   const [sourceMessage, setSourceMessage] = useState("");
   const [sourceError, setSourceError] = useState("");
+  const [catalogSources, setCatalogSources] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogCategory, setCatalogCategory] = useState("");
+  const [importingCatalogId, setImportingCatalogId] = useState(null);
+  const [catalogMessage, setCatalogMessage] = useState("");
+  const [catalogError, setCatalogError] = useState("");
+  const [discoveryRuns, setDiscoveryRuns] = useState([]);
+  const [discoveryRunsLoading, setDiscoveryRunsLoading] = useState(true);
+  const [autoIntervals, setAutoIntervals] = useState({});
   const [companies, setCompanies] = useState([]);
   const [companiesLoading, setCompaniesLoading] = useState(true);
   const [busyCompanyId, setBusyCompanyId] = useState(null);
@@ -166,6 +181,17 @@ function AdminDashboard() {
       externalSources.filter((source) => source.source_key !== "crawl4ai_demo"),
     [externalSources]
   );
+  const autoDiscoverySourceCount = useMemo(
+    () =>
+      externalSources.filter((source) => source.auto_discovery_enabled).length,
+    [externalSources]
+  );
+  const recentDiscoveryFailures = useMemo(
+    () =>
+      discoveryRuns.filter((run) => run.run_status === "failed").slice(0, 10)
+        .length,
+    [discoveryRuns]
+  );
 
   useEffect(() => {
     const loadAdminWorkspace = async () => {
@@ -173,6 +199,8 @@ function AdminDashboard() {
         fetchRecruiters(),
         fetchExternalJobs(),
         fetchExternalSources(),
+        fetchExternalSourceCatalog(),
+        fetchDiscoveryRuns(),
         fetchCompanies(),
       ]);
       setDashboardLoading(false);
@@ -261,6 +289,13 @@ function AdminDashboard() {
           return notes;
         }, {})
       );
+      setAutoIntervals(
+        rows.reduce((intervals, source) => {
+          intervals[source.external_source_id] =
+            source.discovery_interval_minutes || 1440;
+          return intervals;
+        }, {})
+      );
     } catch (requestError) {
       console.log(
         "ADMIN EXTERNAL SOURCE FETCH ERROR:",
@@ -272,6 +307,47 @@ function AdminDashboard() {
       );
     } finally {
       setExternalSourcesLoading(false);
+    }
+  };
+
+  const fetchExternalSourceCatalog = async (filters = {}) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setCatalogLoading(false);
+        return;
+      }
+      setCatalogLoading(true);
+      const response = await getExternalSourceCatalog(token, filters);
+      setCatalogSources(response.data.catalogSources || []);
+      setCatalogError("");
+    } catch (requestError) {
+      setCatalogError(
+        requestError.response?.data?.error ||
+          "Unable to load the external source catalog."
+      );
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const fetchDiscoveryRuns = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setDiscoveryRunsLoading(false);
+        return;
+      }
+      setDiscoveryRunsLoading(true);
+      const response = await getExternalDiscoveryRuns(token);
+      setDiscoveryRuns(response.data.discoveryRuns || []);
+    } catch (requestError) {
+      setDiscoveryError(
+        requestError.response?.data?.error ||
+          "Unable to load discovery run history."
+      );
+    } finally {
+      setDiscoveryRunsLoading(false);
     }
   };
 
@@ -608,7 +684,7 @@ function AdminDashboard() {
         );
       }
 
-      await fetchExternalJobs();
+      await Promise.all([fetchExternalJobs(), fetchDiscoveryRuns()]);
       setDiscoveryMessage(
         `Crawl4AI demo discovery completed. Discovered: ${
           result.discovered_count ?? 0
@@ -665,7 +741,11 @@ function AdminDashboard() {
         throw new Error(result.message || "Read-only discovery failed");
       }
 
-      await Promise.all([fetchExternalJobs(), fetchExternalSources()]);
+      await Promise.all([
+        fetchExternalJobs(),
+        fetchExternalSources(),
+        fetchDiscoveryRuns(),
+      ]);
       setDiscoveryMessage(
         `${source.source_name} discovery completed. Discovered: ${
           result.discovered_count ?? 0
@@ -690,6 +770,119 @@ function AdminDashboard() {
     }
   };
 
+  const handleCatalogSearch = async (event) => {
+    event.preventDefault();
+    await fetchExternalSourceCatalog({
+      search: catalogSearch || undefined,
+      category: catalogCategory || undefined,
+    });
+  };
+
+  const handleImportCatalogSource = async (catalogSource) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setCatalogError("Please sign in again to import this source.");
+        return;
+      }
+      setImportingCatalogId(catalogSource.catalog_id);
+      setCatalogMessage("");
+      setCatalogError("");
+      const response = await importExternalSourceCatalog(
+        token,
+        catalogSource.catalog_id
+      );
+      setCatalogMessage(
+        response.data.message ||
+          "Source imported as pending and disabled for safety review."
+      );
+      await Promise.all([
+        fetchExternalSources(),
+        fetchExternalSourceCatalog({
+          search: catalogSearch || undefined,
+          category: catalogCategory || undefined,
+        }),
+      ]);
+    } catch (requestError) {
+      setCatalogError(
+        requestError.response?.data?.error ||
+          "Unable to import this catalog source."
+      );
+    } finally {
+      setImportingCatalogId(null);
+    }
+  };
+
+  const handleAutoDiscoveryUpdate = async (source, enabled) => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setSourceError("Please sign in again to update automatic discovery.");
+        return;
+      }
+      const intervalMinutes = Number(
+        autoIntervals[source.external_source_id] ||
+          source.discovery_interval_minutes ||
+          1440
+      );
+      if (!Number.isInteger(intervalMinutes) || intervalMinutes < 5) {
+        setSourceError("Discovery interval must be at least 5 minutes.");
+        return;
+      }
+      setBusySourceId(source.external_source_id);
+      setSourceMessage("");
+      setSourceError("");
+      const response = await updateExternalSourceAutoDiscovery(
+        token,
+        source.external_source_id,
+        {
+          auto_discovery_enabled: enabled,
+          discovery_interval_minutes: intervalMinutes,
+        }
+      );
+      setSourceMessage(response.data.message || "Automatic discovery updated.");
+      await fetchExternalSources();
+    } catch (requestError) {
+      setSourceError(
+        requestError.response?.data?.error ||
+          "Unable to update automatic discovery."
+      );
+    } finally {
+      setBusySourceId(null);
+    }
+  };
+
+  const handleSaveDiscoveryInterval = async (source) => {
+    try {
+      const token = localStorage.getItem("token");
+      const intervalMinutes = Number(autoIntervals[source.external_source_id]);
+      if (!token) {
+        setSourceError("Please sign in again to save this interval.");
+        return;
+      }
+      if (!Number.isInteger(intervalMinutes) || intervalMinutes < 5) {
+        setSourceError("Discovery interval must be at least 5 minutes.");
+        return;
+      }
+      setBusySourceId(source.external_source_id);
+      setSourceError("");
+      const response = await updateExternalSourceAutoDiscovery(
+        token,
+        source.external_source_id,
+        { discovery_interval_minutes: intervalMinutes }
+      );
+      setSourceMessage(response.data.message || "Discovery interval saved.");
+      await fetchExternalSources();
+    } catch (requestError) {
+      setSourceError(
+        requestError.response?.data?.error ||
+          "Unable to save the discovery interval."
+      );
+    } finally {
+      setBusySourceId(null);
+    }
+  };
+
   const handleRefreshAll = async () => {
     setRefreshing(true);
     setMessage("");
@@ -697,6 +890,8 @@ function AdminDashboard() {
       fetchRecruiters(),
       fetchExternalJobs(),
       fetchExternalSources(),
+      fetchExternalSourceCatalog(),
+      fetchDiscoveryRuns(),
       fetchCompanies(),
     ]);
     setRefreshing(false);
@@ -868,6 +1063,10 @@ function AdminDashboard() {
                 <span>External sources</span>
                 <strong>{externalSources.length}</strong>
               </article>
+              <article className="approved">
+                <span>Auto discovery enabled</span>
+                <strong>{autoDiscoverySourceCount}</strong>
+              </article>
               <article className="pending">
                 <span>Jobs pending review</span>
                 <strong>{reviewCounts.pending_review}</strong>
@@ -883,6 +1082,10 @@ function AdminDashboard() {
               <article className="blocked">
                 <span>Rejected jobs</span>
                 <strong>{reviewCounts.rejected}</strong>
+              </article>
+              <article className={recentDiscoveryFailures ? "blocked" : "approved"}>
+                <span>Recent discovery failures</span>
+                <strong>{recentDiscoveryFailures}</strong>
               </article>
             </div>
           </div>
@@ -1219,6 +1422,41 @@ function AdminDashboard() {
           <span className="count-pill">{externalSources.length}</span>
         </div>
 
+        <div className="admin-discovery-operation">
+          <div>
+            <strong>Crawl4AI safe demo discovery</strong>
+            <p>
+              Safe raw local demo HTML only. No external website is contacted.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={handleRunCrawl4AiDemoDiscovery}
+            disabled={
+              discoveryLoading ||
+              !crawl4AiDemoAvailable ||
+              externalSourcesLoading ||
+              !crawl4AiDemoAllowed
+            }
+          >
+            {discoveryLoading
+              ? "Running Demo Discovery..."
+              : "Run Crawl4AI Demo Discovery"}
+          </button>
+        </div>
+
+        {discoveryMessage && (
+          <div className="notice-banner compact" role="status">
+            {discoveryMessage}
+          </div>
+        )}
+        {discoveryError && (
+          <div className="notice-banner compact admin-error-notice" role="alert">
+            {discoveryError}
+          </div>
+        )}
+
         <form
           className="admin-source-create-form"
           onSubmit={handleCreateExternalSource}
@@ -1365,6 +1603,19 @@ function AdminDashboard() {
                         >
                           {source.is_enabled ? "Enabled" : "Disabled"}
                         </span>
+                        {!isCrawl4AiDemo && (
+                          <span
+                            className={`status-badge ${
+                              source.auto_discovery_enabled
+                                ? "status-approved"
+                                : "status-hidden"
+                            }`}
+                          >
+                            {source.auto_discovery_enabled
+                              ? "Auto discovery on"
+                              : "Auto discovery off"}
+                          </span>
+                        )}
                         <span
                           className={`status-badge ${
                             source.real_crawl_allowed
@@ -1401,6 +1652,11 @@ function AdminDashboard() {
                         " "
                       )}
                     </span>
+                    {!isCrawl4AiDemo && (
+                      <span>
+                        Interval: {source.discovery_interval_minutes || 1440} min
+                      </span>
+                    )}
                   </div>
 
                   {source.base_url && (
@@ -1434,6 +1690,46 @@ function AdminDashboard() {
                       {source.last_discovery_message && (
                         <p>{source.last_discovery_message}</p>
                       )}
+                    </div>
+                  )}
+
+                  {!isCrawl4AiDemo && (
+                    <div className="admin-source-schedule">
+                      <div>
+                        <span>Next automatic run</span>
+                        <strong>{formatCreatedDate(source.next_discovery_at)}</strong>
+                      </div>
+                      <div>
+                        <span>Automatic status</span>
+                        <strong>
+                          {String(source.auto_discovery_status || "Not run").replace(
+                            /_/g,
+                            " "
+                          )}
+                        </strong>
+                      </div>
+                      {source.auto_discovery_error && (
+                        <p>{source.auto_discovery_error}</p>
+                      )}
+                      <label>
+                        Discovery interval (minutes)
+                        <input
+                          type="number"
+                          min="5"
+                          step="1"
+                          value={
+                            autoIntervals[source.external_source_id] ??
+                            source.discovery_interval_minutes ??
+                            1440
+                          }
+                          onChange={(event) =>
+                            setAutoIntervals((current) => ({
+                              ...current,
+                              [source.external_source_id]: event.target.value,
+                            }))
+                          }
+                        />
+                      </label>
                     </div>
                   )}
 
@@ -1514,29 +1810,82 @@ function AdminDashboard() {
                       {sourceBusy ? "Updating..." : "Save Notes"}
                     </button>
                     {!isCrawl4AiDemo && (
-                      <button
-                        type="button"
-                        className={
-                          source.real_crawl_allowed
-                            ? "secondary-button small-button"
-                            : "primary-button small-button"
-                        }
-                        onClick={() =>
-                          handleExternalSourceUpdate(source.external_source_id, {
-                            real_crawl_allowed: !source.real_crawl_allowed,
-                          })
-                        }
-                        disabled={
-                          sourceBusy ||
-                          (!source.real_crawl_allowed &&
-                            (!source.is_enabled ||
-                              source.trust_status !== "approved"))
-                        }
-                      >
-                        {source.real_crawl_allowed
-                          ? "Revoke Real Crawl"
-                          : "Allow Read-only Crawl"}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className={
+                            source.real_crawl_allowed
+                              ? "secondary-button small-button"
+                              : "primary-button small-button"
+                          }
+                          onClick={() =>
+                            handleExternalSourceUpdate(source.external_source_id, {
+                              real_crawl_allowed: !source.real_crawl_allowed,
+                            })
+                          }
+                          disabled={
+                            sourceBusy ||
+                            (!source.real_crawl_allowed &&
+                              (!source.is_enabled ||
+                                source.trust_status !== "approved"))
+                          }
+                        >
+                          {source.real_crawl_allowed
+                            ? "Disable Read-only Crawl"
+                            : "Allow Read-only Crawl"}
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button small-button"
+                          onClick={() => handleSaveDiscoveryInterval(source)}
+                          disabled={sourceBusy}
+                        >
+                          Save Interval
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            source.auto_discovery_enabled
+                              ? "secondary-button small-button"
+                              : "primary-button small-button"
+                          }
+                          onClick={() =>
+                            handleAutoDiscoveryUpdate(
+                              source,
+                              !source.auto_discovery_enabled
+                            )
+                          }
+                          disabled={
+                            sourceBusy ||
+                            (!source.auto_discovery_enabled &&
+                              (!source.is_enabled ||
+                                source.trust_status !== "approved" ||
+                                !source.real_crawl_allowed ||
+                                !source.base_url))
+                          }
+                        >
+                          {source.auto_discovery_enabled
+                            ? "Disable Auto Discovery"
+                            : "Enable Auto Discovery"}
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-button small-button"
+                          onClick={() => handleRunAllowlistedDiscovery(source)}
+                          disabled={
+                            sourceBusy ||
+                            runningSourceId !== null ||
+                            !source.is_enabled ||
+                            source.trust_status !== "approved" ||
+                            !source.real_crawl_allowed ||
+                            !source.base_url
+                          }
+                        >
+                          {runningSourceId === source.external_source_id
+                            ? "Running Discovery..."
+                            : "Run Discovery Now"}
+                        </button>
+                      </>
                     )}
                   </div>
                 </article>
@@ -1545,6 +1894,203 @@ function AdminDashboard() {
           </div>
         )}
       </section>
+      )}
+
+      {activeTab === "source-catalog" && (
+        <section
+          className="panel admin-source-catalog-panel"
+          id="admin-tabpanel-source-catalog"
+          role="tabpanel"
+          aria-labelledby="admin-tab-source-catalog"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Governed Source Onboarding</p>
+              <h2>External Source Catalog</h2>
+              <p className="muted">
+                Import conservative public career-page examples for individual
+                review. Catalog URLs may change and are never trusted or enabled
+                automatically.
+              </p>
+            </div>
+            <span className="count-pill">{catalogSources.length}</span>
+          </div>
+
+          <form className="admin-catalog-filters" onSubmit={handleCatalogSearch}>
+            <label>
+              Search catalog
+              <input
+                type="search"
+                value={catalogSearch}
+                onChange={(event) => setCatalogSearch(event.target.value)}
+                placeholder="Company, source key, or URL"
+              />
+            </label>
+            <label>
+              Category
+              <select
+                value={catalogCategory}
+                onChange={(event) => setCatalogCategory(event.target.value)}
+              >
+                <option value="">All categories</option>
+                <option value="company_careers">Company careers</option>
+                <option value="startup_jobs">Startup jobs</option>
+                <option value="ats_job_board">ATS job board</option>
+                <option value="remote_jobs">Remote jobs</option>
+              </select>
+            </label>
+            <button type="submit" className="secondary-button">
+              Apply Filters
+            </button>
+          </form>
+
+          {catalogMessage && (
+            <div className="notice-banner compact" role="status">
+              {catalogMessage}
+            </div>
+          )}
+          {catalogError && (
+            <div className="notice-banner compact admin-error-notice" role="alert">
+              {catalogError}
+            </div>
+          )}
+
+          {catalogLoading ? (
+            <div className="inline-loading-state" role="status">
+              <span className="workspace-loading-spinner" aria-hidden="true" />
+              <span>Loading source catalog...</span>
+            </div>
+          ) : catalogSources.length === 0 ? (
+            <div className="empty-state-card">
+              <span className="empty-state-kicker">No catalog matches</span>
+              <strong>No sources match the current filters.</strong>
+              <p>Clear the filters or add sources manually from External Sources.</p>
+            </div>
+          ) : (
+            <div className="admin-catalog-grid">
+              {catalogSources.map((source) => (
+                <article className="admin-catalog-card" key={source.catalog_id}>
+                  <div className="admin-source-badges">
+                    <span className="status-badge status-hidden">
+                      {String(source.source_category || "uncategorized").replace(
+                        /_/g,
+                        " "
+                      )}
+                    </span>
+                    <span
+                      className={`status-badge ${
+                        source.is_imported ? "status-approved" : "status-pending"
+                      }`}
+                    >
+                      {source.is_imported ? "Imported" : "Catalog only"}
+                    </span>
+                  </div>
+                  <h3>{source.source_name}</h3>
+                  <code>{source.source_key}</code>
+                  <p className="admin-source-reference">{source.base_url}</p>
+                  <div className="admin-source-meta">
+                    <span>{String(source.source_type).replace(/_/g, " ")}</span>
+                    <span>{source.source_region || "Global / varies"}</span>
+                    <span>
+                      Recommended: {source.recommended_interval_minutes} min
+                    </span>
+                  </div>
+                  <p>{source.notes || "Review this public source before import."}</p>
+                  <button
+                    type="button"
+                    className="primary-button small-button"
+                    onClick={() => handleImportCatalogSource(source)}
+                    disabled={
+                      source.is_imported ||
+                      importingCatalogId === source.catalog_id
+                    }
+                  >
+                    {importingCatalogId === source.catalog_id
+                      ? "Importing..."
+                      : source.is_imported
+                      ? "Already Imported"
+                      : "Import Source"}
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {activeTab === "discovery-runs" && (
+        <section
+          className="panel admin-discovery-runs-panel"
+          id="admin-tabpanel-discovery-runs"
+          role="tabpanel"
+          aria-labelledby="admin-tab-discovery-runs"
+        >
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Read-only Audit Trail</p>
+              <h2>Discovery Runs</h2>
+              <p className="muted">
+                Recent manual and automatic crawl attempts. No applications are
+                submitted by discovery.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={fetchDiscoveryRuns}
+              disabled={discoveryRunsLoading}
+            >
+              {discoveryRunsLoading ? "Refreshing..." : "Refresh Runs"}
+            </button>
+          </div>
+
+          {discoveryRunsLoading ? (
+            <div className="inline-loading-state" role="status">
+              <span className="workspace-loading-spinner" aria-hidden="true" />
+              <span>Loading discovery runs...</span>
+            </div>
+          ) : discoveryRuns.length === 0 ? (
+            <div className="empty-state-card">
+              <span className="empty-state-kicker">No discovery runs</span>
+              <strong>No source has been crawled yet.</strong>
+              <p>Configure a governed source, then run it manually or enable its schedule.</p>
+            </div>
+          ) : (
+            <div className="admin-discovery-run-list">
+              {discoveryRuns.map((run) => (
+                <article
+                  className="admin-discovery-run-card"
+                  key={run.discovery_run_id}
+                >
+                  <div>
+                    <div className="admin-source-badges">
+                      <span className={statusClass(run.run_status)}>
+                        {run.run_status}
+                      </span>
+                      <span className="status-badge status-hidden">
+                        {run.run_trigger}
+                      </span>
+                    </div>
+                    <h3>{run.source_name || "Removed external source"}</h3>
+                    <p className="admin-source-reference">{run.source_url}</p>
+                  </div>
+                  <div className="admin-run-counts">
+                    <span>Discovered <strong>{run.discovered_count || 0}</strong></span>
+                    <span>Inserted <strong>{run.inserted_count || 0}</strong></span>
+                    <span>Updated <strong>{run.updated_count || 0}</strong></span>
+                  </div>
+                  <div className="admin-source-meta">
+                    <span>Created {formatCreatedDate(run.created_at)}</span>
+                    <span>Completed {formatCreatedDate(run.completed_at)}</span>
+                  </div>
+                  {run.error_message && (
+                    <p className="admin-run-error">{run.error_message}</p>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {activeTab === "discovery" && (
@@ -1721,8 +2267,8 @@ function AdminDashboard() {
             <span className="empty-state-kicker">Review queue empty</span>
             <strong>No discovered external jobs are waiting here.</strong>
             <p>Run an approved discovery operation to create items for moderation.</p>
-            <button type="button" className="secondary-button" onClick={() => setActiveTab("discovery")}>
-              Open Discovery
+            <button type="button" className="secondary-button" onClick={() => setActiveTab("external-sources")}>
+              Open External Sources
             </button>
           </div>
         ) : (

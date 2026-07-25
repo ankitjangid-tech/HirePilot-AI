@@ -9,6 +9,30 @@ const roleDestinations = {
   admin: "/admin",
 };
 
+const loginRoles = [
+  {
+    id: "candidate",
+    label: "Candidate Login",
+    badge: "Candidate",
+    description:
+      "Discover reviewed jobs, manage applications, and follow interview updates.",
+  },
+  {
+    id: "recruiter",
+    label: "Recruiter Login",
+    badge: "Recruiter",
+    description:
+      "Manage your company profile, jobs, applicants, and interviews.",
+  },
+  {
+    id: "admin",
+    label: "Admin Login",
+    badge: "Admin",
+    description:
+      "Govern access, trusted sources, discovery runs, and job review queues.",
+  },
+];
+
 const friendlyLoginError = (error) => {
   const serverMessage = error.response?.data?.error;
 
@@ -34,6 +58,7 @@ function Login() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedRole, setSelectedRole] = useState("candidate");
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -44,6 +69,20 @@ function Login() {
       setMessage("Signing in...");
 
       const response = await login({ email, password });
+
+      if (response.data.role !== selectedRole) {
+        localStorage.removeItem("token");
+        localStorage.removeItem("role");
+        localStorage.removeItem("recruiter_status");
+        localStorage.removeItem("recruiter_status_reason");
+        setMessage("");
+        setError(
+          `This account is not ${selectedRole === "admin" ? "an" : "a"} ${
+            selectedRole
+          } account.`
+        );
+        return;
+      }
 
       localStorage.setItem("token", response.data.token);
       localStorage.setItem("role", response.data.role);
@@ -84,13 +123,41 @@ function Login() {
 
   return (
     <div className="auth-shell">
-      <div className="auth-card">
+      <div className="auth-card auth-card-role-split">
         <div className="auth-brand">
           <span>HirePilot AI</span>
-          <h1>Welcome back</h1>
+          <h1>Choose your workspace</h1>
           <p>
-            Sign in to continue to your Candidate Workspace, Recruiter
-            Workspace, or Admin Control Panel.
+            Select the role you intend to use, then sign in with that account.
+          </p>
+        </div>
+
+        <div className="login-role-grid" aria-label="Select login role">
+          {loginRoles.map((role) => (
+            <button
+              type="button"
+              className={`login-role-card ${
+                selectedRole === role.id ? "selected" : ""
+              }`}
+              aria-pressed={selectedRole === role.id}
+              onClick={() => {
+                setSelectedRole(role.id);
+                setError("");
+                setMessage("");
+              }}
+              key={role.id}
+            >
+              <span>{role.badge}</span>
+              <strong>{role.label}</strong>
+              <small>{role.description}</small>
+            </button>
+          ))}
+        </div>
+
+        <div className="selected-role-context" role="status">
+          <span>{loginRoles.find((role) => role.id === selectedRole)?.badge}</span>
+          <p>
+            {loginRoles.find((role) => role.id === selectedRole)?.description}
           </p>
         </div>
 
@@ -123,7 +190,11 @@ function Login() {
             </Link>
 
             <button className="btn btn-primary" type="submit" disabled={loading}>
-              {loading ? "Signing in..." : "Login"}
+              {loading
+                ? "Signing in..."
+                : `Continue as ${
+                    loginRoles.find((role) => role.id === selectedRole)?.badge
+                  }`}
             </button>
           </div>
         </form>

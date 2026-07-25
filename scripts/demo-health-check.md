@@ -32,6 +32,11 @@ Optional request timeout, in seconds:
 - Optional queue statistics at `http://127.0.0.1:8000/queue/stats`
 - React frontend at `http://localhost:3000/`
 
+The script does not call authenticated Admin endpoints. Verify scheduled
+discovery manually in **Admin Control Panel → Discovery Runs** after setting
+`AUTO_DISCOVERY_ENABLED=true`, restarting the backend, and safely enabling a
+governed source. The scheduler is disabled by default.
+
 ## Result meanings
 
 - **PASS** — the check is ready.

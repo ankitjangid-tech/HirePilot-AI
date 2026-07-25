@@ -42,13 +42,19 @@ const isValidPublicSourceReference = (value) => {
   try {
     const parsed = new URL(String(value || "").trim());
     const hostname = parsed.hostname.toLowerCase();
+    const prohibitedPortal =
+      hostname === "linkedin.com" ||
+      hostname.endsWith(".linkedin.com") ||
+      hostname === "indeed.com" ||
+      hostname.endsWith(".indeed.com");
     return (
       ["http:", "https:"].includes(parsed.protocol) &&
       !parsed.username &&
       !parsed.password &&
       hostname !== "localhost" &&
       !hostname.endsWith(".localhost") &&
-      !hostname.endsWith(".local")
+      !hostname.endsWith(".local") &&
+      !prohibitedPortal
     );
   } catch (error) {
     return false;
@@ -395,6 +401,17 @@ const getExternalSources = async (req, res) => {
         last_discovery_run_at,
         last_discovery_status,
         last_discovery_message,
+        auto_discovery_enabled,
+        discovery_interval_minutes,
+        last_auto_discovery_at,
+        next_discovery_at,
+        auto_discovery_status,
+        auto_discovery_error,
+        source_category,
+        source_priority,
+        source_region,
+        source_company_size,
+        source_tags,
         notes,
         created_by,
         created_at,
@@ -521,6 +538,7 @@ const updateExternalSource = async (req, res) => {
         is_enabled,
         trust_status,
         real_crawl_allowed,
+        auto_discovery_enabled,
         base_url,
         source_key
        FROM external_sources
@@ -574,6 +592,15 @@ const updateExternalSource = async (req, res) => {
       requestedTrustStatus !== "approved"
     ) {
       updates.push("real_crawl_allowed = FALSE");
+    }
+
+    if (
+      requestedEnabled !== true ||
+      requestedTrustStatus !== "approved" ||
+      req.body.real_crawl_allowed === false
+    ) {
+      updates.push("auto_discovery_enabled = FALSE");
+      updates.push("next_discovery_at = NULL");
     }
 
     if (req.body.is_enabled !== undefined) {
@@ -636,6 +663,363 @@ const updateExternalSource = async (req, res) => {
 
     return res.status(500).json({
       error: "Unable to update external discovery source",
+    });
+  }
+};
+
+const getExternalSourceCatalog = async (req, res) => {
+  try {
+    const filters = [];
+    const values = [];
+    const category = optionalText(req.query.category);
+    const region = optionalText(req.query.region);
+    const search = optionalText(req.query.search);
+
+    if (category) {
+      values.push(category);
+      filters.push(`source_category = $${values.length}`);
+    }
+
+    if (region) {
+      values.push(region);
+      filters.push(`source_region = $${values.length}`);
+    }
+
+    if (search) {
+      values.push(`%${search}%`);
+      filters.push(`(
+        source_name ILIKE $${values.length}
+        OR source_key ILIKE $${values.length}
+        OR base_url ILIKE $${values.length}
+        OR COALESCE(notes, '') ILIKE $${values.length}
+      )`);
+    }
+
+    const result = await pool.query(
+      `SELECT
+        catalog_id,
+        source_name,
+        source_key,
+        source_type,
+        base_url,
+        source_category,
+        source_region,
+        source_company_size,
+        recommended_interval_minutes,
+        safety_mode,
+        notes,
+        is_seeded,
+        created_at,
+        updated_at,
+        EXISTS (
+          SELECT 1
+          FROM external_sources source
+          WHERE source.source_key = external_source_catalog.source_key
+             OR LOWER(BTRIM(source.base_url)) =
+                LOWER(BTRIM(external_source_catalog.base_url))
+        ) AS is_imported
+       FROM external_source_catalog
+       ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""}
+       ORDER BY source_category, source_name, catalog_id`,
+      values
+    );
+
+    return res.status(200).json({
+      catalogSources: result.rows,
+      total: result.rows.length,
+    });
+  } catch (error) {
+    console.log("ADMIN EXTERNAL SOURCE CATALOG ERROR:", error.message);
+    return res.status(500).json({
+      error: "Unable to fetch the external source catalog",
+    });
+  }
+};
+
+const importExternalSourceCatalog = async (req, res) => {
+  const catalogId = Number(req.params.catalogId);
+
+  if (!catalogId) {
+    return res.status(400).json({
+      error: "Valid catalog source id is required",
+    });
+  }
+
+  try {
+    const catalogResult = await pool.query(
+      `SELECT *
+       FROM external_source_catalog
+       WHERE catalog_id = $1::integer
+       LIMIT 1`,
+      [catalogId]
+    );
+    const catalogSource = catalogResult.rows[0];
+
+    if (!catalogSource) {
+      return res.status(404).json({
+        error: "Catalog source not found",
+      });
+    }
+
+    if (!isValidPublicSourceReference(catalogSource.base_url)) {
+      return res.status(400).json({
+        error:
+          "This catalog entry does not currently contain a valid public HTTP(S) source URL.",
+      });
+    }
+
+    const duplicateResult = await pool.query(
+      `SELECT external_source_id, source_name
+       FROM external_sources
+       WHERE source_key = $1::text
+          OR LOWER(BTRIM(base_url)) = LOWER(BTRIM($2::text))
+       LIMIT 1`,
+      [catalogSource.source_key, catalogSource.base_url]
+    );
+
+    if (duplicateResult.rows.length) {
+      return res.status(409).json({
+        error: "This catalog source has already been imported.",
+        externalSource: duplicateResult.rows[0],
+      });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO external_sources (
+        source_name,
+        source_key,
+        source_type,
+        base_url,
+        is_enabled,
+        trust_status,
+        safety_mode,
+        notes,
+        created_by,
+        real_crawl_allowed,
+        auto_discovery_enabled,
+        discovery_interval_minutes,
+        source_category,
+        source_region,
+        source_company_size
+       )
+       VALUES (
+        $1::varchar(150),
+        $2::varchar(150),
+        $3::varchar(50),
+        $4::text,
+        FALSE,
+        'pending',
+        $5::varchar(50),
+        $6::text,
+        $7::integer,
+        FALSE,
+        FALSE,
+        $8::integer,
+        $9::varchar(80),
+        $10::varchar(80),
+        $11::varchar(80)
+       )
+       RETURNING *`,
+      [
+        catalogSource.source_name,
+        catalogSource.source_key,
+        catalogSource.source_type,
+        catalogSource.base_url,
+        catalogSource.safety_mode || "manual_review",
+        catalogSource.notes,
+        req.user.user_id,
+        Math.max(
+          Number(catalogSource.recommended_interval_minutes || 1440),
+          5
+        ),
+        catalogSource.source_category,
+        catalogSource.source_region,
+        catalogSource.source_company_size,
+      ]
+    );
+
+    return res.status(201).json({
+      message:
+        "Catalog source imported as pending and disabled. Approve each safety control before discovery.",
+      externalSource: result.rows[0],
+    });
+  } catch (error) {
+    console.log("ADMIN EXTERNAL SOURCE IMPORT ERROR:", error.message);
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "This catalog source has already been imported.",
+      });
+    }
+    return res.status(500).json({
+      error: "Unable to import the catalog source",
+    });
+  }
+};
+
+const updateExternalSourceAutoDiscovery = async (req, res) => {
+  const sourceId = Number(req.params.sourceId);
+
+  if (!sourceId) {
+    return res.status(400).json({
+      error: "Valid external source id is required",
+    });
+  }
+
+  try {
+    const sourceResult = await pool.query(
+      `SELECT *
+       FROM external_sources
+       WHERE external_source_id = $1::integer
+       LIMIT 1`,
+      [sourceId]
+    );
+    const source = sourceResult.rows[0];
+
+    if (!source) {
+      return res.status(404).json({
+        error: "External discovery source not found",
+      });
+    }
+
+    const updates = [];
+    const values = [sourceId];
+    let enableAutoDiscovery = source.auto_discovery_enabled === true;
+
+    if (req.body.auto_discovery_enabled !== undefined) {
+      if (typeof req.body.auto_discovery_enabled !== "boolean") {
+        return res.status(400).json({
+          error: "auto_discovery_enabled must be true or false",
+        });
+      }
+      enableAutoDiscovery = req.body.auto_discovery_enabled;
+      values.push(enableAutoDiscovery);
+      updates.push(`auto_discovery_enabled = $${values.length}::boolean`);
+    }
+
+    if (req.body.discovery_interval_minutes !== undefined) {
+      const intervalMinutes = Number(req.body.discovery_interval_minutes);
+      if (!Number.isInteger(intervalMinutes) || intervalMinutes < 5) {
+        return res.status(400).json({
+          error: "Discovery interval must be an integer of at least 5 minutes",
+        });
+      }
+      values.push(intervalMinutes);
+      updates.push(`discovery_interval_minutes = $${values.length}::integer`);
+    }
+
+    if (req.body.next_discovery_at !== undefined) {
+      const nextDiscoveryAt = req.body.next_discovery_at
+        ? new Date(req.body.next_discovery_at)
+        : null;
+      if (nextDiscoveryAt && Number.isNaN(nextDiscoveryAt.getTime())) {
+        return res.status(400).json({
+          error: "next_discovery_at must be a valid date or null",
+        });
+      }
+      values.push(nextDiscoveryAt ? nextDiscoveryAt.toISOString() : null);
+      updates.push(`next_discovery_at = $${values.length}::timestamp`);
+    } else if (
+      req.body.auto_discovery_enabled === true &&
+      source.auto_discovery_enabled !== true
+    ) {
+      updates.push("next_discovery_at = CURRENT_TIMESTAMP");
+    } else if (req.body.auto_discovery_enabled === false) {
+      updates.push("next_discovery_at = NULL");
+    }
+
+    if (enableAutoDiscovery) {
+      const eligible =
+        source.trust_status === "approved" &&
+        source.is_enabled === true &&
+        source.real_crawl_allowed === true &&
+        isValidPublicSourceReference(source.base_url);
+      if (!eligible) {
+        return res.status(400).json({
+          error:
+            "Approve and enable this source, allow read-only crawling, and provide a public URL before enabling automatic discovery.",
+        });
+      }
+    }
+
+    if (!updates.length) {
+      return res.status(400).json({
+        error:
+          "Provide auto_discovery_enabled, discovery_interval_minutes, or next_discovery_at to update",
+      });
+    }
+
+    const result = await pool.query(
+      `UPDATE external_sources
+       SET ${updates.join(", ")},
+           updated_at = CURRENT_TIMESTAMP
+       WHERE external_source_id = $1::integer
+       RETURNING *`,
+      values
+    );
+
+    return res.status(200).json({
+      message: enableAutoDiscovery
+        ? "Automatic discovery configuration saved."
+        : "Automatic discovery disabled.",
+      externalSource: result.rows[0],
+    });
+  } catch (error) {
+    console.log("ADMIN AUTO DISCOVERY UPDATE ERROR:", error.message);
+    return res.status(500).json({
+      error: "Unable to update automatic discovery settings",
+    });
+  }
+};
+
+const getExternalDiscoveryRuns = async (req, res) => {
+  try {
+    const requestedLimit = Number(req.query.limit || 100);
+    const limit = Math.floor(
+      Math.min(
+        Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 100, 1),
+        200
+      )
+    );
+    const result = await pool.query(
+      `SELECT
+        run.discovery_run_id,
+        run.external_source_id,
+        run.requested_by,
+        run.source_url,
+        run.run_status,
+        run.discovered_count,
+        run.inserted_count,
+        run.updated_count,
+        run.error_message,
+        run.raw_summary,
+        run.started_at,
+        run.completed_at,
+        run.created_at,
+        source.source_name,
+        source.source_key,
+        requester.full_name AS requested_by_name,
+        CASE
+          WHEN run.requested_by IS NULL THEN 'automatic'
+          ELSE 'manual'
+        END AS run_trigger
+       FROM external_discovery_runs run
+       LEFT JOIN external_sources source
+         ON source.external_source_id = run.external_source_id
+       LEFT JOIN users requester
+         ON requester.user_id = run.requested_by
+       ORDER BY run.created_at DESC, run.discovery_run_id DESC
+       LIMIT $1::integer`,
+      [limit]
+    );
+
+    return res.status(200).json({
+      discoveryRuns: result.rows,
+      total: result.rows.length,
+    });
+  } catch (error) {
+    console.log("ADMIN DISCOVERY RUN LIST ERROR:", error.message);
+    return res.status(500).json({
+      error: "Unable to fetch discovery run history",
     });
   }
 };
@@ -870,6 +1254,10 @@ module.exports = {
   getExternalSources,
   createExternalSource,
   updateExternalSource,
+  getExternalSourceCatalog,
+  importExternalSourceCatalog,
+  updateExternalSourceAutoDiscovery,
+  getExternalDiscoveryRuns,
   getRecruiterCompanies,
   updateCompanyVerification,
   runCrawl4AiDemoDiscovery,
